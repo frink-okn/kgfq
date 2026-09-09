@@ -26,12 +26,18 @@ uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
 uv run kgfq fetch phaseskg '? rdfs:label ?' --out labels   # tables/labels.parquet + receipt
 uv run kgfq receipt labels
 uv run kgfq log
+uv run kgfq lint query.rq                              # KGFQ001–KGFQ012; never rewrites
 ```
 
 A pattern is three terms in doc 03 §3.3 syntax — `<iri>`, `prefix:local` against the
 release's manifest prefixes, `"literal"@en` — with `?` for an anonymous variable and
 `?name` for a named one. `--values` takes a JSON `{"vars": [...], "rows": [[...]]}`
 document or a tab-separated file whose first line names the variables.
+
+`kgfq lint` parses a query's algebra and names what its syntax hides — a finite set in a
+`FILTER`, a variable predicate scanned by name, a disconnected pattern that denotes a
+Cartesian product. The rules and the reasoning behind them are in
+[docs/sparql-author-guide.md](docs/sparql-author-guide.md).
 
 The working directory is the workspace: `.kgfq/` holds endpoints, pins and caches,
 `tables/` the evidence with a receipt beside each file and inside it, and

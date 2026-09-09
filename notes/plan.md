@@ -829,6 +829,27 @@ run. Algebra comes from `rdflib`'s SPARQL parser, which is slow but not on any h
 path; if the 468-query replay makes that hurt, the fallback is `spargebra` behind a
 small Rust extension — the benchmark's own shape analysis already used it.
 
+*Landed 2026-09-09* as `kgfq.lint` (`analysis`, `rules`, `header`; `tests/test_lint.py`;
+the author guide is `docs/sparql-author-guide.md`). rdflib's algebra is walked once
+into a `QueryShape` — required and optional patterns, unions, subselects, SERVICE
+blocks, filters classified by what they constrain, constant binds, VALUES, paths,
+modifiers — and the twelve rules read that. Decided while building: connectivity
+(KGFQ004/005) is union-find over variables, where a FILTER over two variables and a
+non-constant BIND count as edges, a UNION is one node bound by all its branches,
+and a disconnected component whose every pattern has a constant subject (one
+entity's values beside the main pattern) is a *warning* rather than a refusal, since
+the product is one row wide; KGFQ006 fires only when the label pattern's subject is
+not pinned by a constant, VALUES or a constant BIND, so a residual filter after
+`resolve` is never flagged; KGFQ012 takes its closed predicates from `--closed` or
+from the dataset descriptor when it ever declares them, since doc 03 has no field
+yet; a query that does not parse is exit code 2, never a crash. Over the registry
+corpus (97 queries now, 89 when the plan was written): 96 parse, one has an
+undeclared prefix in the corpus itself, 25 are clean, every gate in §8 fires —
+LINCS is the only strong refusal, with both KGFQ004 and KGFQ005 — and the totals
+(32 × KGFQ007, 32 × KGFQ008, 16 × KGFQ009, 8 × KGFQ001, 7 × KGFQ002, 7 × KGFQ011)
+are the corpus saying where its cost is. `--normalize` is not written; it belongs
+with `kgfq sparql`.
+
 ### 5.7 The ceiling, stated so nobody sells past it
 
 The actor suite rescues the pathological tail and leaves the median alone. Broad
@@ -975,7 +996,7 @@ per response, joined on `KGF-Request-Id` — never through a proxy.
 **A — the floor (weeks 1–2).** *Started 2026-09-09: scaffold, C1, C2, C3, C6, C9, and
 the §6 commands through `fetch` and `explain` are in, 87 tests against two spawned
 servers built with `kgf build` plus an in-test gateway proxy, and the CLI verified
-against `apps.okn.us/kgf`; remaining in A: the linter, the `kgf-sparql` features and
+against `apps.okn.us/kgf`, and the linter with its author guide; remaining in A: the `kgf-sparql` features and
 `kgfq sparql`.* uv project scaffold, CI against a spawned `kgf serve`.
 C1–C3, and C9's workspace and log from the first command — C10 and C11 read it, and
 a log retrofitted later is how `mcp-okn` came to ask the model to keep one. `kgfq

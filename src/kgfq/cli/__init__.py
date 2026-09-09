@@ -33,6 +33,7 @@ from ..client.terms import (
     parse_term,
     term_columns,
 )
+from ..lint import RULES, ParseError, datasets_of, lint, parse_header
 from ..plan import execute_fetch, plan_fetch
 from ..workspace.log import Step
 from ..workspace.receipts import fetch_receipt
@@ -363,6 +364,62 @@ class Cli:
         self.emit(handle, table=[[k, v] for k, v in handle.items()], header=["field", "value"])
         return 0
 
+    def lint(self) -> int:
+        """Lint one or more .rq files; exit 1 when a diagnostic at or above
+        --fail-on appears, 2 when a file does not parse. Nothing is rewritten."""
+        a = self.args
+        closed = set(a.closed or [])
+        if a.dataset:
+            ep, rel = self.resolve(a.dataset)
+            descriptor = ep.dataset_descriptor(rel.dataset)
+            for key in ("closed_predicates", "transitively_closed", "closed"):
+                value = descriptor.get(key)
+                if isinstance(value, list):
+                    closed |= {str(v) for v in value}
+        order = ["info", "warning", "strong"]
+        worst = -1
+        results = []
+        for path in a.files:
+            text = Path(path).read_text(encoding="utf-8")
+            header = parse_header(text)
+            entry: dict[str, Any] = {"file": str(path), "datasets": datasets_of(header)}
+            try:
+                diagnostics = lint(text, threshold=a.threshold, closed_predicates=closed or None)
+            except ParseError as e:
+                entry["error"] = str(e)
+                worst = max(worst, len(order))
+                results.append(entry)
+                continue
+            entry["diagnostics"] = [d.as_dict() for d in diagnostics]
+            for d in diagnostics:
+                worst = max(worst, order.index(d.severity))
+            results.append(entry)
+        if self.json:
+            self.emit(
+                {
+                    "files": results,
+                    "rules": {k: {"severity": v[0], "title": v[1]} for k, v in RULES.items()},
+                }
+            )
+        else:
+            for entry in results:
+                if "error" in entry:
+                    self.out.write(f"{entry['file']}: parse error: {entry['error']}\n")
+                    continue
+                diags = entry["diagnostics"]
+                self.out.write(
+                    f"{entry['file']}: {len(diags)} diagnostic{'s' if len(diags) != 1 else ''}\n"
+                )
+                for d in diags:
+                    self.out.write(f"  {d['code']} [{d['severity']}] {d['message']}\n")
+                    if d.get("suggestion"):
+                        self.out.write(f"      → {d['suggestion']}\n")
+        if worst >= len(order):
+            return 2
+        if a.fail_on != "never" and worst >= order.index(a.fail_on):
+            return 1
+        return 0
+
     def receipt(self) -> int:
         self.emit(self.workspace.read_receipt(self.args.table))
         return 0
@@ -592,6 +649,27 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("pattern")
     sm.add_argument("-n", type=int, default=10)
     sm.add_argument("--seed", type=int, default=0)
+
+    ln = sub.add_parser("lint", help="lint SPARQL files (KGFQ001–KGFQ012); never rewrites")
+    ln.add_argument("files", nargs="+")
+    ln.add_argument(
+        "--threshold", type=int, default=6, help="complex-pattern review threshold (KGFQ008)"
+    )
+    ln.add_argument(
+        "--closed",
+        action="append",
+        help="a predicate IRI the dataset publishes transitively closed (KGFQ012); repeatable",
+    )
+    ln.add_argument(
+        "--dataset",
+        help="read closed predicates from this dataset's descriptor when it declares them",
+    )
+    ln.add_argument(
+        "--fail-on",
+        choices=["strong", "warning", "info", "never"],
+        default="strong",
+        help="exit 1 at or above this severity",
+    )
 
     r = sub.add_parser("receipt", help="the receipt attached to a table")
     r.add_argument("table")
