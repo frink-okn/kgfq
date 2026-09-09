@@ -1,0 +1,31 @@
+<http://example.org/gene/G1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Gene> .
+<http://example.org/gene/G1> <http://www.w3.org/2000/01/rdf-schema#label> "GENE 1"@en .
+<http://example.org/gene/G1> <http://example.org/symbol> "G1" .
+<http://example.org/gene/G1> <http://example.org/inPathway> <http://example.org/pathway/P2> .
+<http://example.org/gene/G2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Gene> .
+<http://example.org/gene/G2> <http://www.w3.org/2000/01/rdf-schema#label> "GENE 2"@en .
+<http://example.org/gene/G2> <http://example.org/symbol> "G2" .
+<http://example.org/gene/G2> <http://example.org/inPathway> <http://example.org/pathway/P3> .
+<http://example.org/gene/G3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Gene> .
+<http://example.org/gene/G3> <http://www.w3.org/2000/01/rdf-schema#label> "GENE 3"@en .
+<http://example.org/gene/G3> <http://example.org/symbol> "G3" .
+<http://example.org/gene/G3> <http://example.org/inPathway> <http://example.org/pathway/P1> .
+<http://example.org/gene/G4> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Gene> .
+<http://example.org/gene/G4> <http://www.w3.org/2000/01/rdf-schema#label> "GENE 4"@en .
+<http://example.org/gene/G4> <http://example.org/symbol> "G4" .
+<http://example.org/gene/G4> <http://example.org/inPathway> <http://example.org/pathway/P2> .
+<http://example.org/gene/G5> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Gene> .
+<http://example.org/gene/G5> <http://www.w3.org/2000/01/rdf-schema#label> "GENE 5"@en .
+<http://example.org/gene/G5> <http://example.org/symbol> "G5" .
+<http://example.org/gene/G5> <http://example.org/inPathway> <http://example.org/pathway/P3> .
+<http://example.org/gene/G6> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Gene> .
+<http://example.org/gene/G6> <http://www.w3.org/2000/01/rdf-schema#label> "GENE 6"@en .
+<http://example.org/gene/G6> <http://example.org/symbol> "G6" .
+<http://example.org/gene/G6> <http://example.org/inPathway> <http://example.org/pathway/P1> .
+<http://example.org/gene/G7> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Gene> .
+<http://example.org/gene/G7> <http://www.w3.org/2000/01/rdf-schema#label> "GENE 7"@en .
+<http://example.org/gene/G7> <http://example.org/symbol> "G7" .
+<http://example.org/gene/G7> <http://example.org/inPathway> <http://example.org/pathway/P2> .
+<http://example.org/pathway/P1> <http://www.w3.org/2000/01/rdf-schema#label> "Pathway 1"@en .
+<http://example.org/pathway/P2> <http://www.w3.org/2000/01/rdf-schema#label> "Pathway 2"@en .
+<http://example.org/pathway/P3> <http://www.w3.org/2000/01/rdf-schema#label> "Pathway 3"@en .

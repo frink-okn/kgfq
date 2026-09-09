@@ -1,0 +1,11 @@
+schema: 1
+dataset:
+  id: genekg
+  iri: https://example.org/kg/genekg
+  title: Gene KG (fixture)
+  description: Genes, symbols, and pathways.
+semantics:
+  prefixes: {ex: 'http://example.org/', rdfs: 'http://www.w3.org/2000/01/rdf-schema#'}
+  roles: {label: ['http://www.w3.org/2000/01/rdf-schema#label']}
+resources:
+  memory_limit: 256M

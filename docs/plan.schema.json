@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgf.okn.us/schemas/kgfq.plan/1",
+  "title": "kgfq plan (D12)",
+  "description": "The strategy function's output: an inspectable plan built before any data request. `explain` prints it, receipts embed it, the harness diffs it.",
+  "type": "object",
+  "required": ["schema", "intent", "steps", "estimated_requests", "approximations", "completeness_expectation"],
+  "properties": {
+    "schema": {"const": "kgfq.plan/1"},
+    "intent": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": {"enum": ["fetch"]},
+        "pattern": {"$ref": "#/$defs/pattern"},
+        "bindings": {"type": "object", "properties": {"vars": {"type": "array", "items": {"type": "string"}}, "rows": {"type": "integer"}}}
+      }
+    },
+    "caps": {"type": "object", "description": "The endpoint caps the rules were computed from (never hard-coded).", "additionalProperties": {"type": "integer"}},
+    "evidence": {"type": "object", "description": "Statistics consulted: `count` (R1) and the R2 arithmetic.", "additionalProperties": true},
+    "steps": {"type": "array", "items": {"$ref": "#/$defs/step"}},
+    "estimated_requests": {"type": "integer"},
+    "estimated_rows": {"type": ["integer", "null"]},
+    "approximations": {"type": "array", "items": {"type": "string"}},
+    "completeness_expectation": {"enum": ["complete", "partial", "unknown"]}
+  },
+  "$defs": {
+    "pattern": {
+      "type": "object",
+      "description": "Positions in doc 03 §3.3 syntax; `?name` for variables.",
+      "properties": {"s": {"type": "string"}, "p": {"type": "string"}, "o": {"type": "string"}}
+    },
+    "step": {
+      "type": "object",
+      "required": ["op", "pattern", "estimated_requests"],
+      "properties": {
+        "op": {"enum": ["count", "count_bindings", "fragment", "bindings", "labels", "search", "star"]},
+        "pattern": {"$ref": "#/$defs/pattern"},
+        "estimated_requests": {"type": "integer"},
+        "estimated_rows": {"type": ["integer", "null"]},
+        "bindings": {"type": "integer", "description": "Number of caller rows bound, when any."},
+        "note": {"type": "string", "description": "Which rule decided, in words."}
+      }
+    }
+  }
+}

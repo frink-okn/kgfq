@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgf.okn.us/schemas/kgfq.log/1",
+  "title": "kgfq session log record (C9, D15)",
+  "description": "One line of kgfq.log.jsonl per library operation, written by the library and never by the model. The log is a replayable script.",
+  "type": "object",
+  "required": ["schema", "step", "skin", "command", "args", "inputs", "pins", "started", "status"],
+  "properties": {
+    "schema": {"const": "kgfq.log/1"},
+    "step": {"type": "integer", "minimum": 1},
+    "time": {"type": "string", "format": "date-time"},
+    "started": {"type": "string", "format": "date-time"},
+    "elapsed_ms": {"type": "number"},
+    "skin": {"enum": ["cli", "mcp", "library"]},
+    "command": {"type": "string"},
+    "args": {"type": "object"},
+    "inputs": {
+      "type": "object",
+      "description": "Each consumed value or file, classified against earlier steps' outputs.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {"enum": ["derived", "asserted", "external"]},
+          "table": {"type": "string"}, "step": {"type": ["integer", "null"]}, "grade": {"type": ["string", "null"]},
+          "path": {"type": "string"}, "sha256": {"type": "string"}
+        }
+      }
+    },
+    "pins": {"type": "array", "items": {"type": "object", "required": ["origin", "dataset", "version", "content_digest"]}},
+    "plan": {"type": "object", "description": "kgfq.plan/1, for planned operations."},
+    "receipt": {"type": "object", "description": "The receipt, or its summary for operations that write no table."},
+    "output": {"type": "object", "description": "What the step produced: table, path, rows, content_hash, or a scalar."},
+    "status": {"enum": ["ok", "error"]},
+    "error": {"type": "string"}
+  }
+}

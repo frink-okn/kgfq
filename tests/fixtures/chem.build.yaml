@@ -1,0 +1,11 @@
+schema: 1
+dataset:
+  id: chemkg
+  iri: https://example.org/kg/chemkg
+  title: Chem KG (fixture)
+  description: Chemicals and the genes they affect.
+semantics:
+  prefixes: {ex: 'http://example.org/', rdfs: 'http://www.w3.org/2000/01/rdf-schema#', xsd: 'http://www.w3.org/2001/XMLSchema#'}
+  roles: {label: ['http://www.w3.org/2000/01/rdf-schema#label']}
+resources:
+  memory_limit: 256M

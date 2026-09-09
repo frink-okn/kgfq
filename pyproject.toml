@@ -1,0 +1,56 @@
+[project]
+name = "kgfq"
+version = "0.0.1"
+description = "The KGF client stack: library, kgfq CLI, and kgfq-mcp server for Knowledge Graph Fragments"
+readme = "README.md"
+authors = [{ name = "Jim Balhoff", email = "jim@balhoff.org" }]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.27",
+    "pyyaml>=6.0",
+    "duckdb>=1.1",
+    "pyarrow>=17",
+]
+
+[project.scripts]
+kgfq = "kgfq.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.16.6",
+    "ty>=0.0.79",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kgfq"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "PL"]
+ignore = [
+    "PLR0913",  # many arguments: the endpoint operations take what doc 03 takes
+    "PLR2004",  # magic numbers in tests and cap defaults
+    "PLR0912", "PLR0915", "PLR0911",  # branch/statement counts; the CLI and planner are long by nature
+    "E501",     # line length is the formatter's job; long strings stay readable
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["kgfq"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLC1901", "B011", "RUF012"]
+
+[tool.ty.environment]
+python-version = "3.12"
