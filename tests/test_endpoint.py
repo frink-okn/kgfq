@@ -6,7 +6,7 @@ import pytest
 
 from kgfq.client.endpoint import Count, Endpoint, Pattern, Release
 from kgfq.client.errors import KgfError
-from kgfq.client.terms import Iri, Literal, Var
+from kgfq.client.terms import Iri, Literal, Var, format_term
 
 EX = "http://example.org/"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
@@ -183,3 +183,51 @@ def test_summary_card(ep, rel):
     assert card["counts"]["triples"] == 61
     assert card["dataset"]["description"] == "Chemicals and the genes they affect."
     assert "Chem KG" in ep.summary(rel, "md")
+
+
+def test_links_behind_a_public_base_prefix_resolve_against_the_host(chem, tmp_path):
+    """A gateway mounts the server under /kgf and the server emits links that
+    carry the prefix (doc 03 §3.2); appending them to the origin would double it."""
+    from tests.conftest import spawn_server
+    from tests.proxy import Proxy
+
+    prefixed = spawn_server(
+        chem.root, tmp_path / "prefixed.log", public_base="http://placeholder/kgf"
+    )
+    proxy = Proxy(prefixed.origin, prefix="/kgf")
+    try:
+        e = Endpoint(proxy.origin)
+        rel = e.release("chemkg")
+        assert rel.link("fragment").startswith("/kgf/chemkg/")
+        assert e.count(rel, Pattern(p=LABEL)).value == 12
+        assert e.manifest(rel)["id"] == "chemkg"
+        assert all(r.url.startswith(proxy.origin + "/") for r in _all_records(e, rel))
+        e.close()
+    finally:
+        proxy.stop()
+        prefixed.stop()
+
+
+def _all_records(e, rel):
+    with e.trace() as t:
+        e.get(rel.link("count"), {"p": format_term(LABEL)})
+    return t.records
+
+
+def test_query_refused_by_a_real_proxy_falls_back_to_post(chem):
+    from tests.proxy import Proxy
+
+    proxy = Proxy(chem.origin, prefix="", refuse_query=True)
+    try:
+        e = Endpoint(proxy.origin)
+        rel = e.release("chemkg")
+        rows = [[Iri(EX + "chem/1")], [Iri(EX + "chem/2")]]
+        counts = e.count_bindings(rel, Pattern(s=Var("c"), p=AFFECTS, o=Var("g")), ["c"], rows)
+        assert [c.value for c in counts] == [2, 2]
+        assert e.query_supported is False
+        assert proxy.methods_seen.count("QUERY") == 1 and "POST" in proxy.methods_seen
+        list(e.bindings(rel, Pattern(s=Var("c"), p=AFFECTS, o=Var("g")), ["c"], rows))
+        assert proxy.methods_seen.count("QUERY") == 1, "a refusal is remembered per origin"
+        e.close()
+    finally:
+        proxy.stop()

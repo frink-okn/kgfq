@@ -172,7 +172,17 @@ an approximate answer a finding rather than a bug.
 false`, extension autoinstall and autoload off, a dedicated temporary directory, table
 and column identifiers constructed by code and never interpolated from model output
 or graph content, and an allowlist of statement kinds for the `sql` tool. Publisher
-prose arrives delimited as data. Injection scenarios are in the evaluation (§8).
+prose is the publisher's and is trusted — a KG we query is a curated source, and
+distrusting its prose would mean trusting nothing it says (settled 2026-09-09; the
+server's summary card carries the description bare on purpose, and doc 06 §6.7,
+doc 04 §4.2 and doc 07 §7.4 were refined the same day to say so).
+The sandbox is not about the publisher. It is least privilege: literals can carry
+third-party text (abstracts, records, scraped descriptions), an agent holding a
+`sql` tool and a shell can be steered by text it reads, and removing the
+capabilities that would make that harmful — no external access from DuckDB, no
+identifier built from content, no rows into context, `import` as the one door with
+the library fetching URLs — costs nothing and needs no label on the data. The
+evaluation (§8) keeps the scenarios that test those mechanisms.
 
 **D7. Capabilities are checked, not believed.** Every manifest today declares `star`,
 `terms`, and `export`, and all three 404 (results §7.1). Until the server's
@@ -373,6 +383,17 @@ keyed by the caller's names with the ``binding`` index made absolute; every requ
 is a `RequestRecord` with the server's id, wire and decoded bytes, and completeness
 read from the `KGF-*` headers before the body.
 
+*Added later the same day*, after the first run against `https://apps.okn.us/kgf`:
+descriptor links are root-relative paths that already carry the deployment's
+public-base prefix (`/kgf/ubergraph/v/…`, doc 03 §3.2), so they resolve against the
+host, while the two paths the client spells itself — the service descriptor and a
+dataset by id — live under the origin, prefix included. Getting that wrong made the
+live server look empty. Both gateway behaviours now have tests behind a small
+in-test reverse proxy (`tests/proxy.py`): links behind a `--public-base` prefix
+resolve, and QUERY refused with 405 by the proxy falls back to POST and stays
+there for that origin. The live gateway passes QUERY through. §10 item 3's client
+half is therefore done.
+
 ### C2. Discovery and pinning
 
 A session is a set of graphs (D14). The workspace's endpoint list is seeded from the
@@ -409,6 +430,22 @@ carries a `kgf:` field.
 single-pattern and **batch bindings** forms — the planner's workhorse, one round trip
 sizing an entire candidate set. All cached per release forever, because releases are
 immutable.
+
+*Landed 2026-09-09* as `kgfq.client.statistics` (`tests/test_statistics.py`), cached
+under `.kgfq/cache/stats/<digest>/`: the root node, the `properties` and `classes`
+inventories in the server's own item shape, the two projections keyed by their
+filters, and `counts.jsonl` for single and per-binding counts. Decided while
+building: numbers come from the **queryable** view, whose counts doc 03 §3.4.10
+makes equal to `/count`'s, and a test asserts that equality for every predicate.
+So an exact inventory number answers a count with zero requests — `? p ?`,
+`? rdf:type C`, `? ? ?` — which is R1's "nearly free" made literal: on the live
+server, ubergraph's 112 M `rdfs:subClassOf` count costs one inventory fetch
+(two pages of 1,266 predicates) and nothing afterwards. One more bound position
+gets a VoID-style average (`triples / distinct_subjects`) marked inexact, for R1
+ordering before any count; anything else goes to the server once. Batch counts
+send only the rows the cache has not seen. The planner reports the source of
+its count in the plan's evidence (`inventory:predicate`, `cache`, `server`), and
+`kgfq schema --all --children properties|classes` reads the cached inventory.
 
 ### C4. The strategy function
 
@@ -913,13 +950,13 @@ keywords), and the disconnected query (ProKN LINCS), which must produce `KGFQ004
 
 A separate federation corpus (client-suite §7.3) before any multi-endpoint claim:
 two- and three-endpoint joins, lopsided pairs, disjoint identifier spaces, partial
-capability availability. Injection scenarios — hostile labels and descriptions
-against the MCP path — run here too (doc 06 §6.7).
+capability availability. The least-privilege scenarios of D6 — literals carrying
+SQL syntax or instruction-like text, against the MCP path — run here too.
 
 A trust corpus beside it, for C9–C11 and D17: a session with a pasted constant,
 which the report must list as asserted; the same session with the constant taken
-from a `resolve` result, which it must list as derived; a hostile label that must
-arrive delimited and never reach a SQL identifier; a `LIMIT` pushdown (R3) whose
+from a `resolve` result, which it must list as derived; a label containing SQL
+syntax, which must never reach a SQL identifier; a `LIMIT` pushdown (R3) whose
 approximation must appear in the report; a number in the agent's answer with no
 citation, which the report must flag; a SPARQL-only fixture whose data changes
 between fetch and replay, which must report *source changed* rather than fail; an
@@ -935,10 +972,11 @@ per response, joined on `KGF-Request-Id` — never through a proxy.
 
 ## 9. Sequence
 
-**A — the floor (weeks 1–2).** *Started 2026-09-09: scaffold, C1, C2, C6, C9, and the
-§6 commands through `fetch` and `explain` are in, 70+ tests against two spawned
-servers built with `kgf build`; remaining in A: C3 as a cached statistics layer,
-the linter, the `kgf-sparql` features and `kgfq sparql`.* uv project scaffold, CI against a spawned `kgf serve`.
+**A — the floor (weeks 1–2).** *Started 2026-09-09: scaffold, C1, C2, C3, C6, C9, and
+the §6 commands through `fetch` and `explain` are in, 87 tests against two spawned
+servers built with `kgf build` plus an in-test gateway proxy, and the CLI verified
+against `apps.okn.us/kgf`; remaining in A: the linter, the `kgf-sparql` features and
+`kgfq sparql`.* uv project scaffold, CI against a spawned `kgf serve`.
 C1–C3, and C9's workspace and log from the first command — C10 and C11 read it, and
 a log retrofitted later is how `mcp-okn` came to ask the model to keep one. `kgfq
 endpoints`, `datasets`, `summary`, `schema`, `count`, `sample`, `fetch` to Parquet and
@@ -988,7 +1026,8 @@ In the order the client blocks on them; most are already filed in
    is this repository's, and the census this client's traffic is for can start on
    the first day it serves.
 3. **`--public-base`** (`public-base.md`) — or every link the client follows on FRINK
-   is wrong.
+   is wrong. *The server side is deployed (links on `apps.okn.us/kgf` carry the
+   prefix) and the client resolves them correctly as of 2026-09-09 (C1).*
 4. **Parquet output** — D8 is written so this is a one-module change here.
 5. **`/star`** — five benchmark tasks are star-shaped; the bindings fallback costs
    13 requests where one would do.
@@ -1003,6 +1042,11 @@ In the order the client blocks on them; most are already filed in
 10. **A bounded facets operation** — pattern-scoped distinct values with counts
     (client-suite §5.1). The one new server operation the client work argues for,
     and the only answer to the blocking-`DISTINCT` class short of tier 2.
+11. ~~Publisher prose delimited as untrusted in the summary card~~ — **withdrawn**
+    the same day: the card's bare description is deliberate, the prose is trusted
+    (D6). Two small findings from the same probe are filed as kgf-rs #15 and #16:
+    `Allow` on a successful QUERY omits QUERY where the 405 lists it, and the serve
+    log carries ANSI codes when stdout is not a terminal. Neither blocks anything.
 
 ## 11. Questions for `../kgf`
 

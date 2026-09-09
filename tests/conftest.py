@@ -82,7 +82,7 @@ def build_bundle(root: Path, dataset: str, version: str, source: Path, config: P
         raise RuntimeError(f"kgf build failed for {dataset}:\n{result.stderr}")
 
 
-def spawn_server(root: Path, log: Path) -> Server:
+def spawn_server(root: Path, log: Path, public_base: str | None = None) -> Server:
     handle = open(log, "w")  # noqa: SIM115 — outlives this function; closed by Server.stop()
     process = subprocess.Popen(
         [
@@ -94,6 +94,7 @@ def spawn_server(root: Path, log: Path) -> Server:
             "127.0.0.1:0",
             "--access-log",
             "off",
+            *(["--public-base", public_base] if public_base else []),
         ],
         stdout=handle,
         stderr=subprocess.STDOUT,

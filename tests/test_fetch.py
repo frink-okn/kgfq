@@ -23,7 +23,11 @@ def test_plan_counts_first_and_pages_at_max_limit(ep):
     rel = ep.release("chemkg")
     with ep.trace() as t:
         plan = plan_fetch(ep, rel, Pattern(p=AFFECTS))
-    assert t.requests == 1 and plan.evidence["count"] == {"value": 24, "exact": True}
+    assert t.requests == 1 and plan.evidence["count"] == {
+        "value": 24,
+        "exact": True,
+        "source": "server",
+    }
     assert [s.op for s in plan.steps] == ["fragment"]
     assert plan.estimated_requests == math.ceil(24 / ep.cap("max_limit", 10000)) == 1
     d = plan.as_dict()

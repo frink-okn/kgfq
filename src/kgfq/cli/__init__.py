@@ -23,6 +23,7 @@ from .. import __version__
 from ..client.endpoint import Endpoint, Pattern, Release
 from ..client.errors import KgfError, KgfqError, TransportError
 from ..client.session import Session
+from ..client.statistics import Statistics
 from ..client.terms import (
     BadTermSyntax,
     Term,
@@ -101,6 +102,9 @@ class Cli:
             return None, None
         return read_values(Path(path), self.prefixes(ep, rel))
 
+    def stats(self, ep: Endpoint, rel: Release) -> Statistics:
+        return Statistics(self.workspace, ep, rel)
+
     def step(self, command: str, **args: Any) -> Step:
         return Step(
             self.workspace, "cli", command, {k: v for k, v in args.items() if v is not None}
@@ -172,8 +176,24 @@ class Cli:
             params["limit"] = a.limit
         step = self.step("schema", dataset=a.dataset, params=params, all=a.all)
         step.pin(_pin(ep, rel))
+        inventory = (
+            a.all
+            and params.get("children") in ("properties", "classes")
+            and not any(
+                k in params for k in ("class", "predicate", "datatype", "view", "projection")
+            )
+        )
         with ep.trace() as t:
-            if a.all and ("children" in params or "projection" in params):
+            if inventory:
+                # the cached inventory (C3): the queryable view, whose numbers
+                # equal /count's, fetched once per release
+                stats = self.stats(ep, rel)
+                body = dict(stats.root())
+                body["collection"] = {"kind": params["children"], "order": "published"}
+                body["items"] = stats.items(params["children"])
+                body["complete"] = True
+                body["next"] = None
+            elif a.all and ("children" in params or "projection" in params):
                 items = list(ep.schema_items(rel, params))
                 page = ep.schema_page(rel, {k: v for k, v in params.items() if k != "cursor"})
                 body = dict(page.body or {})
@@ -210,15 +230,16 @@ class Cli:
         if a.values:
             step.input_file(Path(a.values))
         with ep.trace() as t:
+            stats = self.stats(ep, rel)
             if rows is None:
-                c = ep.count(rel, pattern)
-                payload: dict[str, Any] = {"count": c.value, "exact": c.exact}
+                c, source = stats.count_source(pattern)
+                payload: dict[str, Any] = {"count": c.value, "exact": c.exact, "source": source}
                 if c.min is not None:
                     payload["min"] = c.min
                 table = [[c.value, c.exact]]
                 header = ["count", "exact"]
             else:
-                counts = ep.count_bindings(rel, pattern, vars_ or [], rows)
+                counts = stats.count_bindings(pattern, vars_ or [], rows)
                 payload = {
                     "counts": [
                         {
@@ -274,7 +295,7 @@ class Cli:
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
         vars_, rows = self.values(ep, rel, a.values)
-        plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows)
+        plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows, stats=self.stats(ep, rel))
         self.emit(plan.as_dict())
         return 0
 
@@ -297,7 +318,7 @@ class Cli:
         if a.values:
             inputs[str(a.values)] = step.input_file(Path(a.values))
         with ep.trace() as t:
-            plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows)
+            plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows, stats=self.stats(ep, rel))
             table = execute_fetch(
                 ep, rel, pattern, plan, vars_=vars_, rows=rows, max_rows=a.max_rows
             )

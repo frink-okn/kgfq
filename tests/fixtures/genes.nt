@@ -29,3 +29,6 @@
 <http://example.org/pathway/P1> <http://www.w3.org/2000/01/rdf-schema#label> "Pathway 1"@en .
 <http://example.org/pathway/P2> <http://www.w3.org/2000/01/rdf-schema#label> "Pathway 2"@en .
 <http://example.org/pathway/P3> <http://www.w3.org/2000/01/rdf-schema#label> "Pathway 3"@en .
+<http://example.org/pathway/P1> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Pathway> .
+<http://example.org/pathway/P2> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Pathway> .
+<http://example.org/pathway/P3> <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://example.org/Pathway> .

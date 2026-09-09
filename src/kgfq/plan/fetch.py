@@ -13,7 +13,8 @@ from typing import Any
 
 import pyarrow as pa
 
-from ..client.endpoint import Endpoint, Pattern, Release, Trace
+from ..client.endpoint import Endpoint, Pattern, Release
+from ..client.statistics import Statistics
 from ..client.terms import Term, format_term, term_columns
 
 PLAN_SCHEMA = "kgfq.plan/1"
@@ -89,7 +90,7 @@ def plan_fetch(
     *,
     vars_: Sequence[str] | None = None,
     rows: Sequence[Sequence[Term]] | None = None,
-    trace: Trace | None = None,
+    stats: Statistics | None = None,
 ) -> Plan:
     """R1: one `/count` sizes the pattern. R2: with k join keys and pattern
     cardinality c, bind-join costs ⌈k / max_bindings⌉ requests and column-fetch
@@ -99,8 +100,11 @@ def plan_fetch(
         "max_bindings": endpoint.cap("max_bindings", 200),
     }
     plan = Plan(intent=intent_of(pattern, vars_, rows), steps=[], caps=caps)
-    count = endpoint.count(release, pattern)
-    plan.evidence["count"] = {"value": count.value, "exact": count.exact}
+    if stats is not None:
+        count, source = stats.count_source(pattern)
+    else:
+        count, source = endpoint.count(release, pattern), "server"
+    plan.evidence["count"] = {"value": count.value, "exact": count.exact, "source": source}
     column_requests = max(1, math.ceil(count.value / caps["max_limit"]))
     if rows is None:
         plan.steps.append(

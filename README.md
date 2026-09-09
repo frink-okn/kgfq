@@ -18,12 +18,12 @@ live `kgf serve` processes.
 
 ```bash
 uv sync
-uv run kgfq endpoints add http://127.0.0.1:8080     # a KGF origin; repeatable
+uv run kgfq endpoints add https://apps.okn.us/kgf   # a KGF origin; repeatable
 uv run kgfq datasets                                  # every graph on every endpoint
-uv run kgfq summary chemkg                            # the summary card
-uv run kgfq count chemkg '? rdfs:label ?'             # count before fetch
-uv run kgfq explain chemkg '?c ex:affects ?g' --values chems.tsv
-uv run kgfq fetch chemkg '? rdfs:label ?' --out labels   # tables/labels.parquet + receipt
+uv run kgfq summary ubergraph                         # the summary card
+uv run kgfq count ubergraph '? rdfs:subClassOf ?'      # from the cached inventory, no request
+uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
+uv run kgfq fetch phaseskg '? rdfs:label ?' --out labels   # tables/labels.parquet + receipt
 uv run kgfq receipt labels
 uv run kgfq log
 ```

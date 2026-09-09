@@ -24,6 +24,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any, TypeGuard
+from urllib.parse import urljoin
 
 import httpx
 
@@ -220,9 +221,18 @@ class Endpoint:
     # -- transport ----------------------------------------------------------
 
     def _url(self, path: str) -> str:
-        if path.startswith("http://") or path.startswith("https://"):
+        """Descriptor links are root-relative paths that already carry the
+        deployment's public-base prefix (doc 03 §3.2), so they resolve against
+        the host, never by appending to an origin that has the prefix too."""
+        if path.startswith(("http://", "https://")):
             return path
-        return self.origin + ("" if path.startswith("/") else "/") + path
+        return urljoin(self.origin + "/", path)
+
+    def _base(self, path: str = "") -> str:
+        """A path this client spells itself — the service descriptor at the
+        base, or a dataset descriptor by id — lives under the origin, prefix
+        and all. Only links from the server are root-relative."""
+        return self.origin + "/" + path.lstrip("/")
 
     def _send(
         self,
@@ -326,7 +336,7 @@ class Endpoint:
 
     def service_descriptor(self) -> dict[str, Any]:
         if self._service is None:
-            self._service = self.get("/").body
+            self._service = self.get(self._base()).body
         return self._service
 
     @property
@@ -346,7 +356,7 @@ class Endpoint:
     def dataset_descriptor(self, dataset: str) -> dict[str, Any]:
         if dataset not in self._datasets:
             entry = next((d for d in self.datasets() if d.get("id") == dataset), None)
-            path = entry["url"] if entry and entry.get("url") else f"/{dataset}"
+            path = entry["url"] if entry and entry.get("url") else self._base(dataset)
             self._datasets[dataset] = self.get(path).body
         return self._datasets[dataset]
 

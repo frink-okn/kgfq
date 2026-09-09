@@ -57,7 +57,7 @@ def test_summary_schema_count_sample(ws):
     )
     assert len(payload["items"]) >= 4 and payload["complete"] is True
     payload, _ = run("count", "chemkg", "? ex:affects ?", workspace=ws)
-    assert payload == {"count": 24, "exact": True}
+    assert payload == {"count": 24, "exact": True, "source": "inventory:predicate"}
     payload, _ = run("count", "chemkg", '? rdfs:label "atrazine"@en', workspace=ws)
     assert payload["count"] == 1
     payload, _ = run("sample", "chemkg", "?c ex:affects ?g", "-n", "3", "--seed", "1", workspace=ws)
@@ -93,7 +93,7 @@ def test_count_and_fetch_with_values_file(ws, tmp_path):
     receipt, _ = run("receipt", "affects3", workspace=ws)
     assert receipt["inputs"][str(values)]["kind"] == "external"
     assert receipt["plan"]["steps"][-1]["op"] == "bindings"
-    assert receipt["totals"]["requests"] >= 2 and all(r["request_id"] for r in receipt["requests"])
+    assert receipt["totals"]["requests"] >= 1 and all(r["request_id"] for r in receipt["requests"])
 
 
 def test_fetch_logs_and_classifies_inputs(ws, tmp_path):
