@@ -9,3 +9,4 @@ dist/
 /kgfq.log.jsonl
 /report.md
 .ruff_cache/
+handoff/
