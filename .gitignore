@@ -10,3 +10,5 @@ dist/
 /report.md
 .ruff_cache/
 handoff/
+# corpus-run workspaces are regenerated; their result summaries are kept
+bench/runs/

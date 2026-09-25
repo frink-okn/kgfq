@@ -8,7 +8,7 @@ from typing import Any
 
 from ..client.endpoint import Release, RequestRecord, Trace
 
-RECEIPT_SCHEMA = "kgfq.receipt/1"
+RECEIPT_SCHEMA = "kgfq.receipt/2"
 
 
 def source_of(release: Release) -> dict[str, Any]:

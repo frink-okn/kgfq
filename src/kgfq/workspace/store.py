@@ -148,6 +148,18 @@ class Workspace:
     def receipt_path(self, name: str) -> Path:
         return self.tables_dir / f"{self.check_name(name)}.receipt.json"
 
+    def engine_receipt_path(self, name: str) -> Path:
+        """Where ``kgfq sparql`` files the receipt ``kgf-sparql`` wrote, whole,
+        beside the table it describes (C6)."""
+        return self.tables_dir / f"{self.check_name(name)}.kgf-sparql.receipt.json"
+
+    def relative(self, path: Path) -> str:
+        """A path as the receipt records it: relative to the workspace when inside it."""
+        try:
+            return str(Path(path).resolve().relative_to(self.path))
+        except ValueError:
+            return str(path)
+
     def has_table(self, name: str) -> bool:
         return self.table_path(name).exists()
 
@@ -179,8 +191,24 @@ class Workspace:
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
         pq.write_table(table, tmp, compression="zstd")
         os.replace(tmp, path)
-        self.receipt_path(name).write_text(json.dumps(receipt, indent=1, sort_keys=True) + "\n")
+        self.write_receipt(name, receipt)
         return TableInfo(name, path, table.num_rows, table.column_names, content_hash, receipt)
+
+    def write_receipt(self, name: str, receipt: dict[str, Any]) -> Path:
+        """The sidecar alone: for a table, and for a step that produced none —
+        a run aborted at a budget is a finding with a receipt (D2) and no table."""
+        self.tables_dir.mkdir(parents=True, exist_ok=True)
+        path = self.receipt_path(name)
+        path.write_text(json.dumps(receipt, indent=1, sort_keys=True) + "\n")
+        return path
+
+    def remove_table(self, name: str) -> bool:
+        """Drop ``tables/<name>.parquet`` so a name never describes a table its
+        sidecar does not; true when there was one."""
+        path = self.table_path(name)
+        existed = path.exists()
+        path.unlink(missing_ok=True)
+        return existed
 
     def read_table(self, name: str, columns: list[str] | None = None) -> pa.Table:
         return pq.read_table(self.table_path(name), columns=columns)

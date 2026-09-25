@@ -14,6 +14,7 @@ def triples(rows):
             "s": list(s),
             "p": list(p),
             "o": list(o),
+            "o_kind": ["iri"] * len(rows),
             "o_lang": [None] * len(rows),
             "o_datatype": [None] * len(rows),
         }

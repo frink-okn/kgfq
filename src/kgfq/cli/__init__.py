@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import csv
 import dataclasses
+import hashlib
 import json
 import sys
 from collections.abc import Sequence
@@ -33,8 +34,18 @@ from ..client.terms import (
     parse_term,
     term_columns,
 )
-from ..lint import RULES, ParseError, datasets_of, lint, parse_header
+from ..lint import RULES, Diagnostic, ParseError, datasets_of, lint, parse_header
 from ..plan import execute_fetch, plan_fetch
+from ..sparql import (
+    Budget,
+    ResultError,
+    find_engine,
+    normalize,
+    parse_bytes,
+    read_output,
+    run_engine,
+    sparql_receipt,
+)
 from ..workspace.log import Step
 from ..workspace.receipts import fetch_receipt
 from ..workspace.store import Workspace, WorkspaceError
@@ -420,6 +431,236 @@ class Cli:
             return 1
         return 0
 
+    def sparql(self) -> int:
+        """Run one SPARQL file to completion through ``kgf-sparql`` (plan §5.2):
+        lint; select sources from ``--dataset`` or the ``#+ tags`` header, each
+        pinned; launch with a budget and a receipt path; file the receipt with
+        the diagnostics and any normalization attached. Exit 0 complete, 3
+        aborted at a budget (receipt written), 1 the engine reported an error
+        (its message verbatim), 2 a refusal of kgfq's own."""
+        a = self.args
+        command = find_engine()  # refuse before any work when there is nothing to launch
+        path = Path(a.file)
+        text = path.read_text(encoding="utf-8")
+        datasets = list(a.dataset or []) or datasets_of(parse_header(text))
+        endpoints = list(a.sparql_endpoint or [])
+        if not datasets and not endpoints:
+            raise KgfqError(
+                f"{path}: no sources — give --dataset (repeatable), --sparql-endpoint, or a `#+ tags:` header naming the datasets"
+            )
+        closed = set(a.closed or []) or None
+        budget = Budget(
+            max_requests=a.max_requests or None,
+            max_bytes=parse_bytes(a.max_bytes) or None,
+            max_rows=a.max_rows,
+            timeout_s=a.timeout or None,
+        )
+        out = a.out or _table_name_for(path)
+        self.workspace.check_name(out)
+        step = self.step(
+            "sparql",
+            file=str(path),
+            datasets=datasets,
+            sparql_endpoints=endpoints or None,
+            out=out,
+            budget=budget.as_dict(),
+            http_retries=a.http_retries or None,
+            normalize=a.normalize or None,
+            threshold=a.threshold,
+            force=a.force or None,
+        )
+        inputs = {str(path): step.input_file(path)}
+        try:
+            diagnostics = lint(text, threshold=a.threshold, closed_predicates=closed)
+        except ParseError as e:
+            step.finish("error", f"parse error: {e}")
+            raise KgfqError(f"{path}: parse error: {e}") from None
+        query, normalizations = text, []
+        if a.normalize:
+            query, normalizations = normalize(
+                text, diagnostics, threshold=a.threshold, closed_predicates=closed
+            )
+            if query != text:
+                diagnostics = lint(query, threshold=a.threshold, closed_predicates=closed)
+        lint_report = {"threshold": a.threshold, "diagnostics": [d.as_dict() for d in diagnostics]}
+        refusing = sorted(
+            {d.code for d in diagnostics if d.severity == "strong" or d.code == "KGFQ008"}
+        )
+        if refusing and not a.force:
+            self._write_diagnostics(self.err, str(path), diagnostics)
+            reason = (
+                f"refused: {', '.join(refusing)}; decompose it, or pass --force to run it anyway"
+            )
+            step.finish("error", reason)
+            raise KgfqError(f"{path}: {reason}")
+        sources: list[dict[str, Any]] = []
+        specs: list[str] = []
+        for name in datasets:
+            ep, rel = self.resolve(name)
+            step.pin(_pin(ep, rel))
+            url = ep.link_url(rel, "fragment")
+            sources.append(
+                {
+                    "kind": "kgf",
+                    "grade": "bundle",
+                    "origin": ep.origin,
+                    "dataset": rel.dataset,
+                    "dataset_iri": rel.dataset_iri,
+                    "version": rel.version,
+                    "content_digest": rel.content_digest,
+                    "url": url,
+                }
+            )
+            specs.append(f"kgf@{url}")
+        for url in endpoints:
+            sources.append({"kind": "sparql", "grade": "sparql", "url": url})
+            specs.append(f"sparql@{url}")
+        scratch = self.workspace.scratch_dir()
+        query_path = scratch / f"sparql-{step.step}.rq"
+        query_path.write_text(query, encoding="utf-8")
+        output = scratch / f"sparql-{step.step}.out"
+        engine_receipt = self.workspace.engine_receipt_path(out)
+        run = run_engine(
+            command,
+            query_path,
+            specs,
+            out=output,
+            receipt=engine_receipt,
+            budget=budget,
+            http_retries=a.http_retries,
+        )
+        pointer = None
+        if engine_receipt.exists():
+            pointer = {
+                "path": self.workspace.relative(engine_receipt),
+                "sha256": _sha256(engine_receipt),
+                "schema": (run.receipt or {}).get("schema"),
+            }
+        contract = run.contract
+        budget_name = (run.receipt or {}).get("outcome", {}).get("budget")
+        approximations: list[str] = []
+        table: pa.Table | None = None
+        boolean: bool | None = None
+        read_error: str | None = None
+        if contract == "complete" or (contract == "aborted" and budget_name == "max_rows"):
+            try:
+                _, result = read_output(run)
+            except ResultError as e:
+                read_error = str(e)
+            else:
+                if isinstance(result, bool):
+                    boolean = result
+                else:
+                    table = result
+            if contract == "aborted" and read_error is None:
+                approximations.append(
+                    f"stopped at --max-rows {budget.max_rows}: which rows, not how many, is unspecified"
+                )
+        receipt = sparql_receipt(
+            step=step.step,
+            sources=sources,
+            query=query,
+            original_query=text if query != text else None,
+            normalizations=normalizations,
+            lint=lint_report,
+            run=run,
+            budget=budget,
+            engine_receipt=pointer,
+            inputs=inputs,
+            approximations=approximations,
+        )
+        if read_error:
+            contract = "error"
+            receipt["outcome"] = {**receipt["outcome"], "contract": "error", "error": read_error}
+            receipt["completeness"]["complete"] = False
+        error = receipt["outcome"].get("error") if contract == "error" else None
+        if table is not None:
+            info = self.workspace.write_table(out, table, receipt)
+            receipt = info.receipt
+            step.output(
+                table=info.name,
+                path=str(info.path),
+                rows=info.rows,
+                content_hash=info.content_hash,
+                contract=contract,
+            )
+        else:
+            replaced = self.workspace.remove_table(out)
+            self.workspace.write_receipt(out, receipt)
+            produced: dict[str, Any] = {
+                "contract": contract,
+                "rows": receipt["outcome"].get("rows", 0),
+            }
+            if boolean is not None:
+                produced["boolean"] = boolean
+            if budget_name:
+                produced["budget"] = budget_name
+            if replaced:
+                produced["replaced_table"] = out
+            step.output(**produced)
+        step.receipt(
+            {
+                **{
+                    k: receipt[k]
+                    for k in (
+                        "grade",
+                        "outcome",
+                        "totals",
+                        "budget",
+                        "completeness",
+                        "approximations",
+                        "engine_receipt",
+                    )
+                },
+                "lint": [d.code for d in diagnostics],
+                "normalizations": [n["rule"] for n in normalizations if n["applied"]],
+            }
+        )
+        step.finish("error" if contract == "error" else "ok", error)
+        for stale in (output, query_path):
+            stale.unlink(missing_ok=True)
+        handle: dict[str, Any] = {
+            "contract": contract,
+            "table": out if table is not None else None,
+            "path": str(self.workspace.table_path(out)) if table is not None else None,
+            "rows": table.num_rows if table is not None else receipt["outcome"].get("rows", 0),
+            "columns": table.column_names if table is not None else None,
+            "boolean": boolean,
+            "grade": receipt["grade"],
+            "budget": budget_name,
+            "requests": receipt["totals"]["requests"],
+            "bindings_requests": receipt["totals"]["bindings_requests"],
+            "bytes_decoded": receipt["totals"]["bytes_decoded"],
+            "elapsed_ms": receipt["totals"]["elapsed_ms"],
+            "lint": [d.code for d in diagnostics],
+            "normalizations": normalizations,
+            "approximations": approximations,
+            "engine_receipt": pointer["path"] if pointer else None,
+            "receipt": str(self.workspace.receipt_path(out)),
+            "step": step.step,
+            "content_hash": receipt.get("content_hash"),
+            "error": error,
+        }
+        if not self.json and diagnostics:
+            self._write_diagnostics(self.out, str(path), diagnostics)
+        self.emit(
+            handle,
+            table=[[k, v] for k, v in handle.items() if v is not None],
+            header=["field", "value"],
+        )
+        if error:
+            self.err.write(error.rstrip("\n") + "\n")
+        return {"complete": 0, "aborted": 3}.get(contract, 1)
+
+    def _write_diagnostics(self, stream: Any, name: str, diagnostics: Sequence[Diagnostic]) -> None:
+        stream.write(
+            f"{name}: {len(diagnostics)} diagnostic{'s' if len(diagnostics) != 1 else ''}\n"
+        )
+        for d in diagnostics:
+            stream.write(f"  {d.code} [{d.severity}] {d.message}\n")
+            if d.suggestion:
+                stream.write(f"      → {d.suggestion}\n")
+
     def receipt(self) -> int:
         self.emit(self.workspace.read_receipt(self.args.table))
         return 0
@@ -506,6 +747,20 @@ def _tokenize(text: str) -> list[str]:
             tokens.append(text[i:j])
             i = j
     return tokens
+
+
+def _table_name_for(path: Path) -> str:
+    """A query file's stem as a table name."""
+    name = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in path.stem)[:64]
+    return name if name and (name[0].isalpha() or name[0] == "_") else "q_" + name
+
+
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _default_table_name(pattern: Pattern) -> str:
@@ -650,7 +905,7 @@ def build_parser() -> argparse.ArgumentParser:
     sm.add_argument("-n", type=int, default=10)
     sm.add_argument("--seed", type=int, default=0)
 
-    ln = sub.add_parser("lint", help="lint SPARQL files (KGFQ001–KGFQ012); never rewrites")
+    ln = sub.add_parser("lint", help="lint SPARQL files (KGFQ001-KGFQ012); never rewrites")
     ln.add_argument("files", nargs="+")
     ln.add_argument(
         "--threshold", type=int, default=6, help="complex-pattern review threshold (KGFQ008)"
@@ -669,6 +924,61 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["strong", "warning", "info", "never"],
         default="strong",
         help="exit 1 at or above this severity",
+    )
+
+    sp = sub.add_parser(
+        "sparql",
+        help="run a SPARQL file to completion through kgf-sparql, with a budget and a receipt",
+    )
+    sp.add_argument("file", help="the query; its `#+ tags:` header names the datasets by default")
+    sp.add_argument("--dataset", action="append", help="a source graph, pinned (repeatable)")
+    sp.add_argument(
+        "--sparql-endpoint",
+        action="append",
+        help="a SPARQL endpoint named explicitly, graded `sparql` (repeatable)",
+    )
+    sp.add_argument("--out", help="table name (default: the file's stem)")
+    default = Budget()
+    sp.add_argument(
+        "--max-requests",
+        type=int,
+        default=default.max_requests,
+        help=f"abort after this many requests (default {default.max_requests}; 0 for no limit)",
+    )
+    sp.add_argument(
+        "--max-bytes",
+        default="256M",
+        help="abort after this many decoded bytes (default 256M; 0 for no limit)",
+    )
+    sp.add_argument(
+        "--max-rows",
+        type=int,
+        help="stop after this many result rows, recorded as an approximation",
+    )
+    sp.add_argument(
+        "--timeout",
+        type=float,
+        default=default.timeout_s,
+        help="wall-clock seconds (default 60; 0 for no limit)",
+    )
+    sp.add_argument(
+        "--http-retries", type=int, default=0, help="retry 429/502/503/504 this many times"
+    )
+    sp.add_argument(
+        "--normalize",
+        action="store_true",
+        help="apply the proven-equivalent KGFQ001/KGFQ002 rewrites, each recorded in the receipt",
+    )
+    sp.add_argument(
+        "--threshold", type=int, default=6, help="complex-pattern review threshold (KGFQ008)"
+    )
+    sp.add_argument(
+        "--closed", action="append", help="a predicate the dataset publishes closed (KGFQ012)"
+    )
+    sp.add_argument(
+        "--force",
+        action="store_true",
+        help="run despite a strong diagnostic or the review threshold",
     )
 
     r = sub.add_parser("receipt", help="the receipt attached to a table")

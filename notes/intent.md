@@ -118,3 +118,15 @@ decomposition it suggests — the Lane A failures as refusals, not timeouts.
 3. Whether `project` may be omitted, defaulting to every variable.
 4. Whether an intent may carry `limit` at all in the first version, given R3's
    caveat, or whether `--max-rows` on the result is enough.
+5. *Added 2026-09-10 (plan §11 item 11).* Whether the intent should be capped, by
+   decision, at a list of fetch steps — each pattern optionally bound by a column
+   of an earlier step — with no filter expression language, no optionals and no
+   paths, so that it can never become a second SPARQL; combination would be SQL
+   over the materialised tables, and anything richer would go to the engine
+   through `kgfq sparql`. Under that cap, §2's option (a) shrinks to patterns and
+   binding edges, R4 applies only to `=`/`in` (bound object, `VALUES`), and the
+   `LEFT JOIN` for optionals in §4 is the agent's SQL, not the plan's. The case
+   for the cap is that fetch steps plus SQL are two languages agents already
+   know and the JSON is one they do not; the case against is the planner's
+   projection (R7) and the guard, which only a whole intent lets it do before
+   the first request.

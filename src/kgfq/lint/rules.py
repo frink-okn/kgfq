@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 from rdflib import URIRef, Variable
+from rdflib.plugins.sparql.parserutils import CompValue
 
 from .analysis import (
     LABEL_PREDICATES,
@@ -101,8 +102,6 @@ class _Components:
 
 
 def _expr_vars(expr: Any) -> set[Variable]:
-    from rdflib.plugins.sparql.parserutils import CompValue
-
     if isinstance(expr, Variable):
         return {expr}
     if isinstance(expr, CompValue):
@@ -132,12 +131,13 @@ def lint_shape(
     bound = shape.bound_vars()
     required = shape.required_patterns
 
-    # KGFQ001 — finite equality / IN on a definitely bound variable
+    # KGFQ001 — finite equality / IN on a definitely bound variable; a variable
+    # already pinned by VALUES keeps its filter as the residual check
     for f in shape.filters:
         if not f.required:
             continue
         for var, consts in f.equalities.items():
-            if var not in bound:
+            if var not in bound or var in shape.values_vars:
                 continue
             values = " ".join(dict.fromkeys(format_term(c) for c in consts))
             if len(consts) == 1:

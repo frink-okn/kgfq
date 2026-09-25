@@ -211,15 +211,28 @@ def term_to_json(term: Term) -> dict[str, Any]:
     raise TypeError(f"not a term: {term!r}")
 
 
-def term_columns(term: Term | None) -> tuple[str | None, str | None, str | None]:
-    """The ``(value, lang, datatype)`` triple a table column set stores (doc 06 §6.3)."""
+TERM_KINDS = ("iri", "literal", "bnode")
+
+
+def term_columns(
+    term: Term | None,
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """The ``(value, kind, lang, datatype)`` a table's column set stores for one
+    term (doc 06 §6.3, plus ``kind``). The kind is stated, never inferred from
+    which columns are null. A literal's datatype is stored only when it says
+    something: RDF 1.1 makes a plain literal ``xsd:string`` and a tagged one
+    ``rdf:langString``, so both are null here however the server spelled them —
+    one term, one encoding. A blank node keeps its ``_:`` so that ``s``, which
+    has no kind column, is never ambiguous."""
     match term:
         case None:
-            return (None, None, None)
+            return (None, None, None, None)
         case Iri(value):
-            return (value, None, None)
+            return (value, "iri", None, None)
         case Literal(value, lang, datatype):
-            return (value, lang, datatype)
+            if lang or datatype in (XSD_STRING, RDF_LANG_STRING):
+                datatype = None
+            return (value, "literal", lang, datatype)
         case BNode(label):
-            return (f"_:{label}", None, None)
+            return (f"_:{label}", "bnode", None, None)
     raise TypeError(f"not a term: {term!r}")

@@ -378,6 +378,10 @@ class Endpoint:
                 )
         raise KeyError(f"{self.origin}: dataset {dataset!r} has no release {wanted!r}")
 
+    def link_url(self, release: Release, name: str) -> str:
+        """A release link as the absolute URL another program can be handed."""
+        return self._url(release.link(name))
+
     def manifest(self, release: Release) -> dict[str, Any]:
         key = release.content_digest or f"{release.dataset}@{release.version}"
         if key not in self._manifests:

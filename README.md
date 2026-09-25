@@ -27,6 +27,7 @@ uv run kgfq fetch phaseskg '? rdfs:label ?' --out labels   # tables/labels.parqu
 uv run kgfq receipt labels
 uv run kgfq log
 uv run kgfq lint query.rq                              # KGFQ001–KGFQ012; never rewrites
+uv run kgfq sparql query.rq --dataset prokn --out hits   # lint, then kgf-sparql to completion, or a budget
 ```
 
 A pattern is three terms in doc 03 §3.3 syntax — `<iri>`, `prefix:local` against the
@@ -39,13 +40,25 @@ document or a tab-separated file whose first line names the variables.
 Cartesian product. The rules and the reasoning behind them are in
 [docs/sparql-author-guide.md](docs/sparql-author-guide.md).
 
+`kgfq sparql` is the complete-answering path (plan §5): it lints the file, resolves
+each `--dataset` (or the file's `#+ tags`) to a pinned release, launches `kgf-sparql`
+with a budget (20,000 requests, 256 MiB, 60 s by default) and a receipt path, and
+files the result as a table with a receipt of kind `sparql`. Exit 0 is exactly the
+solution set; 3 is a run aborted at a named budget, with its receipt; 1 is the
+engine's error, verbatim. The engine's own receipt, every request with its id, is
+filed beside the table as `tables/<name>.kgf-sparql.receipt.json`. `--normalize`
+applies the two proven-equivalent rewrites (KGFQ001, KGFQ002) and records each. The
+engine is found through `KGFQ_KGF_SPARQL` or `PATH`; `npm install -g kgf-sparql`, or
+point the variable at `../kgf-sparql/packages/kgf-sparql/bin/kgf-sparql.js`.
+
 The working directory is the workspace: `.kgfq/` holds endpoints, pins and caches,
 `tables/` the evidence with a receipt beside each file and inside it, and
 `kgfq.log.jsonl` the session log.
 
 Tests spawn two real servers over bundles built with `kgf build`; they need the
 `kgf` and `hdtc` binaries, found through `KGFQ_KGF` and `KGFQ_HDTC` or the sibling
-checkouts' release builds:
+checkouts' release builds, and the `kgfq sparql` tests need `kgf-sparql` (the sibling
+checkout's built package and `node`, or `KGFQ_KGF_SPARQL`), skipping otherwise:
 
 ```bash
 uv run pytest
@@ -56,6 +69,10 @@ The toolchain is uv, ruff and ty; a change is done when all of these are clean:
 ```bash
 uv run ruff format src tests && uv run ruff check src tests && uv run ty check src tests && uv run pytest
 ```
+
+`bench/registry_corpus.py` runs the okn-registry corpus through `kgfq sparql` against
+a live server and compares the result with `../kgf-sparql`'s own corpus run; its
+summaries are kept as `bench/registry-corpus-<date>.json`.
 
 ```
 Source/

@@ -70,7 +70,8 @@ def test_fetch_to_workspace_with_receipt(ep, tmp_path):
             step=1, kind="fetch", release=rel, intent=plan.intent, plan=plan.as_dict(), trace=t
         )
     info = ws.write_table("labels", table, receipt)
-    assert info.rows == 12 and info.columns == ["s", "p", "o", "o_lang", "o_datatype"]
+    assert info.rows == 12 and info.columns == ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
+    assert set(table["o_kind"].to_pylist()) == {"literal"}
     assert set(table["o_lang"].to_pylist()) == {"en"}
     r = ws.read_receipt("labels")
     assert r["grade"] == "bundle" and r["source"]["content_digest"] == rel.content_digest

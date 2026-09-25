@@ -122,7 +122,7 @@ def test_batch_counts_send_only_the_rows_the_cache_has_not_seen(stats, ep):
     with ep.trace() as t:
         assert stats.count_bindings(pattern, ["c"], rows) == first
     assert t.requests == 0
-    more = rows + [[Iri(f"{EX}chem/9")]]
+    more = [*rows, [Iri(f"{EX}chem/9")]]
     with ep.trace() as t:
         counts = stats.count_bindings(pattern, ["c"], more)
     assert [c.value for c in counts] == [2, 2, 2, 2]

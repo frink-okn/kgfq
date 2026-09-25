@@ -67,8 +67,25 @@ def test_json_terms():
     assert term_from_json(obj) == Literal("atrazine", lang="en")
     assert term_to_json(Literal("atrazine", lang="en")) == obj
     assert term_from_json({"type": "iri", "value": "http://x"}) == Iri("http://x")
-    assert term_columns(Literal("1", datatype="http://x#int")) == ("1", None, "http://x#int")
-    assert term_columns(None) == (None, None, None)
+    assert term_columns(None) == (None, None, None, None)
+
+
+def test_term_columns_state_the_kind():
+    xsd = "http://www.w3.org/2001/XMLSchema#"
+    assert term_columns(Iri("http://x")) == ("http://x", "iri", None, None)
+    assert term_columns(BNode("b0")) == ("_:b0", "bnode", None, None)
+    assert term_columns(Literal("1", datatype=xsd + "integer")) == (
+        "1",
+        "literal",
+        None,
+        xsd + "integer",
+    )
+    assert term_columns(Literal("hi", lang="en")) == ("hi", "literal", "en", None)
+    # one term, one encoding: a plain literal stores no datatype however it was spelled
+    plain = ("36310", "literal", None, None)
+    assert term_columns(Literal("36310")) == plain
+    assert term_columns(Literal("36310", datatype=xsd + "string")) == plain
+    assert term_columns(term_from_json({"type": "literal", "value": "36310"})) == plain
 
 
 def test_compact_for_display_only():

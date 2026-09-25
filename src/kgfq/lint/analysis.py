@@ -54,6 +54,7 @@ class FilterInfo:
     equalities: dict[Variable, list[Term]]
     text: list[tuple[Variable, str, bool]]
     required: bool
+    expr: Any = None
 
 
 @dataclass(slots=True)
@@ -289,7 +290,7 @@ class _Walker:
     # -- filters ------------------------------------------------------------
 
     def _filter(self, expr: Any, *, required: bool) -> FilterInfo:
-        info = FilterInfo(vars=set(), equalities={}, text=[], required=required)
+        info = FilterInfo(vars=set(), equalities={}, text=[], required=required, expr=expr)
         self._classify(expr, info)
         return info
 

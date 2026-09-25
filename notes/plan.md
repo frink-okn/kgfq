@@ -164,7 +164,8 @@ intermediate is a table rather than a heap.
 **D5. Version pinning and receipts on everything** (doc 06 §6.2.1). `latest` is
 resolved once per session and pinned; every table and every plan carries dataset IRI,
 release label, `content_digest`, the operation sequence, request count, bytes,
-completeness, every approximation made, and the server's `KGF-Request-Id`s once the
+completeness, every approximation made, for a bound fetch how many of the values it was
+given found nothing (C6), and the server's `KGF-Request-Id`s once the
 server sends them (`../kgf-rs/notes/request-logging.md` §4). A receipt is what makes
 an approximate answer a finding rather than a bug.
 
@@ -193,8 +194,10 @@ availability.
 **D8. JSON transport now, isolated so Parquet is a one-module change.** Parquet is
 specified (doc 06 §6.3) and unimplemented (`kgf-rs` has it only in tests asserting
 it is unsupported). The transport layer maps a KGF response to Arrow-shaped columns
-`s, p, o, o_lang, o_datatype`; when the server ships Parquet the same columns arrive
-faster and nothing above the transport changes.
+`s, p, o, o_kind, o_lang, o_datatype`; when the server ships Parquet the same columns
+arrive faster and nothing above the transport changes — once doc 06 §6.3 says how its
+Parquet tells an IRI from a plain literal (§11 item 12). `o_kind` was added
+2026-09-24; see C6.
 
 **D9. Bindings go in a QUERY body with POST as the fallback**, chunked by *both*
 `max_bindings` and `max_request_bytes` (client-suite §6.1). Detect QUERY support from
@@ -333,10 +336,11 @@ kgfq/
     client/               endpoint client, discovery, statistics, executors, receipts
     plan/                 the strategy function and the guard
     lint/                 the SPARQL linter
+    sparql/               launching kgf-sparql, its results and receipt, --normalize (§5.2)
     mcp/                  the MCP server
     cli/                  the CLI
   skills/kgf-integration/ the agent skill
-  bench/                  harness, corpora pins, frozen baselines
+  bench/                  harness, corpora pins, frozen baselines (registry_corpus.py and its runs)
   docs/                   plan, receipt, intent and log-record schemas, author guide
   notes/                  this file
 ```
@@ -504,8 +508,8 @@ with single-pattern `fetch` plus SQL composition as the phase-A subset.
 ### C5. Executors
 
 Streaming for plans the guard calls small: rows in memory, joined in code. Materialize
-for heavy plans: one table per fetched pattern with columns `s, p, o, o_lang,
-o_datatype` (doc 06 §6.3), written as Parquet into the workspace (D15) and joined in
+for heavy plans: one table per fetched pattern with columns `s, p, o, o_kind, o_lang,
+o_datatype` (doc 06 §6.3, plus `o_kind`), written as Parquet into the workspace (D15) and joined in
 DuckDB — `LEFT JOIN` for `OPTIONAL`, `DISTINCT`, grouping and sorting in SQL. Plain IRIs in the tables — HDT dictionary ids are per-bundle and
 cannot survive a cross-graph join (implications §3.8), and DuckDB dictionary-encodes
 strings well anyway.
@@ -534,7 +538,7 @@ derivation is one hop per table. Every receipt carries a source grade (D17).
 *Landed 2026-09-09* as `kgfq.workspace.receipts` with `docs/receipt.schema.json`;
 the receipt is embedded in the Parquet footer under `kgfq.receipt` and written
 beside the file. A fetched table always has the positional columns
-`s, p, o, o_lang, o_datatype` (plus `binding` when bindings were supplied), even
+`s, p, o, o_kind, o_lang, o_datatype` (plus `binding` when bindings were supplied), even
 when the caller named its variables: every fetched table is a set of triples, which
 is what makes `cite` a lookup. The content hash is over canonically sorted rows, so
 replay compares equal results that arrived in another order. A
@@ -543,6 +547,55 @@ signal if the endpoint offers one (VoID `pav:version` or a modification date, el
 the registry's `retrieved_at`), and the result hash; an `external` receipt records
 the import step's description, the content hash, and the URL, time and `ETag` when
 the library fetched the data itself.
+*Landed 2026-09-10*, kind `sparql`, schema `kgfq.receipt/2` (`kgfq.sparql.receipt`).
+Decided while building: a `sparql` receipt wraps `kgf-sparql`'s receipt rather than
+copying it. The engine's request list runs to about 500 bytes per request, half of it
+URL — 2.5 MB at a 5,000-request abort, 10 MB at the 20,000 budget, and 43 of the 94
+corpus receipts exceed 500 requests — and it is the evidence the 2026-09-10 planner
+fixes were read from, so it is kept whole, filed beside the table as
+`tables/<name>.kgf-sparql.receipt.json` and pointed at by path and sha256. The kgfq
+receipt, which is also the Parquet footer and the log record's summary, carries the
+sources (each graded), the query as run, the lint and normalization record, the
+engine's outcome, budget and versions, the totals, and `requests_by_shape`: the list
+folded by method, route, bound positions and predicate, which is the view the fixes
+were made from (the worst corpus receipt folds to 14 shapes). A step that produced
+no table — a run aborted at a budget, an engine error, an ASK — still writes its
+sidecar, since an abort at a named budget is a finding (D2); a stale table of the
+same name is removed so a name never describes a table its receipt does not. SELECT
+results are stored with four columns per variable (`v, v_kind, v_lang, v_datatype`);
+CONSTRUCT and DESCRIBE results take a fetched table's columns.
+
+*Changed 2026-09-24:* a term's kind is a column, `o_kind` (and `v_kind`): `iri`,
+`literal` or `bnode`. Until now a plain literal carried `xsd:string` spelled out so that
+"no language and no datatype" could mean IRI: the datatype column doubled as a type tag,
+an IRI and the string of its text differed only by that spelled-out datatype, and the
+rule was lopsided — a tagged literal stored no `rdf:langString`. Now the kind is stated,
+and a literal's datatype is stored only when it says something: a plain literal has
+neither language nor datatype, however the server spelled it (RDF 1.1: one term, one
+encoding). `term_columns` is the one encoder; `sparql.results` converts rdflib terms to
+it rather than keeping a second copy of the rule. A blank node keeps its `_:` in the
+value, so `s`, which has no kind column, stays unambiguous. `cite` and `join` read the
+kind rather than infer it, and a browser client (the kgf-web sketch in the session of
+2026-09-24) stores its tables the same way. Tables written before this have no `o_kind`
+and hash differently.
+
+*Planned 2026-09-24 — the unmatched report.* A bound fetch (`fetch --values`,
+`fetch(ds, pattern, bindings)`, `hydrate`) records in its receipt a `bindings` block:
+`sent`, `matched`, `unmatched`, and `unmatched_sample` (the first eight, in request
+syntax), counted over the distinct input tuples, since a repeated value answers once and
+the local-filter route keeps only its first index. It is read off the table's `binding`
+column — an input no row answers found nothing — so it is the same whichever route R2
+chose, pushed bindings or a whole fetch filtered here. It is not an approximation: the
+table is exact for the values that matched. It is the number a reader needs before
+trusting the next join, and the receipt is where a silent loss becomes a finding. Found
+in the kgf-web sketch: ruralkg writes 899 ZIPs without their leading zeros, space-padded
+(`"1002 "` for 01002), so binding its postal codes to kwg-places' `hasGEOID` matched
+4,887 of 5,420, and the 533 lost ones, which dropped New England, New Jersey and Puerto
+Rico from an answer, showed only once a sample was printed; after repair, the 64 still
+unmatched were well-formed USPS ZIPs with no Census ZIP area, a different loss the same
+report caught. Schema `kgfq.receipt/3`. The handle `fetch` prints and returns (§6, §7)
+carries `unmatched` and the sample, not only the sidecar: that is where it changes what
+an agent does next. Waits for the paged-completeness fix to `fetch_receipt` to land.
 
 ### C7. Resolve and labels
 
@@ -574,7 +627,7 @@ The directory an analysis lives in (D15): the current directory, or `--workspace
                        carries its own pins
   kgfq.log.jsonl       the session log: one record per library operation, append-only
   tables/
-    genes.parquet      s, p, o, o_lang, o_datatype — or a derived table's columns
+    genes.parquet      s, p, o, o_kind, o_lang, o_datatype — or a derived table's columns
     genes.receipt.json the receipt, also embedded in the Parquet footer
   report.md            written by `kgfq report` (C11)
 ```
@@ -713,6 +766,32 @@ Given those, `kgfq sparql query.rq --dataset a --dataset b` does, in order:
 4. **File the receipt** through C6, with the lint diagnostics and any normalization
    attached, so a SPARQL run and an integration plan are audited the same way.
 
+*Landed 2026-09-10* as `kgfq.sparql` (`engine`, `results`, `receipt`, `normalize`)
+and `kgfq sparql` (`tests/test_sparql.py`, against a real `kgf-sparql` over the two
+fixture servers). The three engine features exist in `../kgf-sparql` (its README, "Use
+as a CLI"; commits `633c03c`–`2713fbb`): `kgf@`/`sparql@` sources, `--max-requests`,
+`--max-bytes`, `--max-rows`, `--timeout`, a receipt on every exit path, exit 0/1/2/3.
+Decided while building: the engine is found through `KGFQ_KGF_SPARQL` (an executable,
+or the package's `bin/kgf-sparql.js` run by `node`) or `PATH`, checked before any other
+work, and its absence is an install message, never a fallback; sources are
+`--dataset` (repeatable) or the file's `#+ tags`, each resolved through C2 to its
+pinned release's `/fragment` URL, and `--sparql-endpoint` names an endpoint
+explicitly, graded `sparql` — a descriptor-declared `services.sparql` waits for a
+server that declares one; the default budget is the corpus's (20,000 requests, 256 MiB,
+60 s; `0` for none), overridable per run and recorded; a strong diagnostic or KGFQ008
+refuses with exit 2 and a logged step unless `--force`; exit 3 mirrors the engine's
+abort, including `--max-rows`, whose rows are written with an approximation like
+`fetch`'s R3; an engine error is exit 1 with its message verbatim; the engine's
+output file lives in `.kgfq/scratch` only until it is a table. `--normalize` applies
+KGFQ002 (the BIND replaced in place) and KGFQ001 (a deduplicated `VALUES` at the top of
+the outer group, the FILTER kept as the residual check) only when the filter's own
+boolean structure proves the finite set — `=`/`IN` under `&&` and `||`, nothing under
+`!` or across variables — and only for IRIs and string literals, since `=` compares
+typed literals by value where `VALUES` matches by term; every rewrite is re-parsed and
+re-linted, reverted and reported when the diagnostic survives, and the receipt carries
+the text as given and as run. One linter change came with it: KGFQ001 no longer fires
+for a variable already pinned by `VALUES`, so a residual filter is not a diagnostic.
+
 ### 5.3 The actor suite — what lives in `../kgf-sparql`, and what does not
 
 The suite is small and its ceiling is known (guidance §5: "the ceiling is low and
@@ -755,7 +834,9 @@ than plan.
   carrying 86% of an agent's traffic, and Lane A showed that handing the same SPARQL
   to a competent engine does not rescue it. If an agent needs SPARQL it gets `kgfq
   sparql`, or `kgf-sparql` itself, from a shell, where the linter, the budget, and
-  the receipt stand between it and the network.
+  the receipt stand between it and the network. *Open 2026-09-10:* the evidence for
+  this exclusion predates the budget, receipt and linter; §11 item 11 proposes a
+  bounded `sparql` tool and the evaluation that would decide it.
 - **No approximation inside the SPARQL path.** No `LIMIT` pushed through a join it
   cannot reason about, no preferred-label substitution for a multi-valued
   `rdfs:label`, no sampling, no "helpful" `DISTINCT`. Those belong to the integration
@@ -848,7 +929,7 @@ undeclared prefix in the corpus itself, 25 are clean, every gate in §8 fires �
 LINCS is the only strong refusal, with both KGFQ004 and KGFQ005 — and the totals
 (32 × KGFQ007, 32 × KGFQ008, 16 × KGFQ009, 8 × KGFQ001, 7 × KGFQ002, 7 × KGFQ011)
 are the corpus saying where its cost is. `--normalize` is not written; it belongs
-with `kgfq sparql`.
+with `kgfq sparql` — *landed there 2026-09-10*, see §5.2.
 
 ### 5.7 The ceiling, stated so nobody sells past it
 
@@ -899,6 +980,10 @@ pattern is one argument of three terms in doc 03 §3.3 syntax, `?` for an anonym
 variable and `?name` for a named one; `--values` is JSON or a tab-separated file
 with a `?var` header; `--max-rows` records an R3 approximation in the receipt;
 `--endpoint` overrides the workspace's list for one invocation.
+*Landed 2026-09-10*: `sparql` (§5.2) — `kgfq sparql <file.rq> [--dataset …]
+[--sparql-endpoint …] [--out name] [--max-requests N] [--max-bytes B] [--max-rows R]
+[--timeout S] [--normalize] [--force]`; the handle names the contract, the table, the
+budget that ended an aborted run, the lint codes and the engine receipt's path.
 
 Conventions: JSON on stdout when not a TTY, tables when it is; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the
@@ -921,7 +1006,7 @@ A thin skin. Doc 06 §6.2.1's tool table, minus what the server does not yet ser
 | `resolve` | C7 |
 | `label` | `/labels` |
 | `count`, `sample` | `/count` incl. bindings, `/sample` |
-| `fetch(ds, pattern[, bindings]) → table` | the strategy function; returns a **handle and a receipt, never rows** |
+| `fetch(ds, pattern[, bindings]) → table` | the strategy function; returns a **handle and a receipt, never rows**; a bound fetch's handle says how many values matched nothing, with a sample (C6) |
 | `hydrate(ds, subjects, properties) → table` | bindings today, `/star` later |
 | `sql(query)` | the sandboxed DuckDB (C8), allowlisted statements only |
 | `cite(table, row)`, `report()` | C11 — so the agent can cite while it writes |
@@ -940,8 +1025,11 @@ inventory; `sparql_query` has no successor here by design. Same language, so wha
 keeping from `mcp-okn` — tool shapes, the benchmark's `agents.py` driver, the
 analysis half of its skill — moves rather than being rewritten. The agent skill in `skills/`
 teaches the loop — discover, resolve, probe with counts and samples, choose the fetch
-strategy, integrate in SQL, verify cardinalities — with count-before-fetch as its one
-discipline, and inherits from `mcp-okn`'s `okn-bioanalysis` skill what is about
+strategy, integrate in SQL, verify cardinalities — with two disciplines: count before
+fetching, and report the denominator, meaning how many of what an analysis started from
+survived each fetch and join, with a look at a sample of what did not. C6's unmatched
+report makes the fetch half mechanical; a SQL join that drops rows stays a habit the
+skill has to teach. It inherits from `mcp-okn`'s `okn-bioanalysis` skill what is about
 analysis rather than about SPARQL.
 
 ## 8. Evaluation — a deliverable
@@ -1009,6 +1097,22 @@ grade from their first version (D17).
 *Exit:* the registry corpus runs through `kgfq sparql` with the same 45 non-empty
 results as the kgf-sparql run, every timeout is a budget abort with a receipt, and
 every command has written its log record.
+*Measured 2026-09-10* (`bench/registry_corpus.py`; `bench/registry-corpus-20260910.json`;
+budget 5,000 requests, 256 MiB, 30 s, to match `../kgf-sparql/test/registry-query-results-cli.json`):
+94 of 97 queries run (3 Wikidata skips); 58 complete and 51 non-empty — the same 51 as
+the kgf-sparql run, with the same row counts, and 38 of the 39 determinate bags
+identical (the exception, `nde/dataset-count-by-agent`, is an unordered `GROUP_CONCAT`
+that differs between kgf-sparql's own runs); 30 aborted at a budget, the same 30
+(20 `max_requests`, 6 `max_bytes`, 4 `timeout`), each with a receipt; 5 engine errors
+verbatim (three the `asDays` extension function, two remote `SERVICE` hosts); one
+parse error; 94 log records for 94 runs. The "45" was August's brTPF count; the run the
+criterion names now yields 51 after the engine's bind-join fix, so phase A's exit is
+read as *the same non-empty results as the kgf-sparql run of the same engine*, which
+holds. That answers the first question in kgf-sparql's handoff of 2026-09-10; the
+second, default budgets, is answered by `kgfq.sparql.Budget` — 20,000 requests, 256 MiB,
+60 s, the corpus's — with the caveat that handoff states: the six queries still
+pathological through the native source spend the whole budget until its planner price
+(its §4.1) is fixed. Phase A is closed.
 
 **B — the planner (weeks 3–5).** C4 in full, its intent document settled first; C5
 with DuckDB, C6, C7, C8, C10. `hydrate`,
@@ -1105,6 +1209,47 @@ To be raised against the design docs rather than settled here.
     describes is D16 here; the version signal and `retrieved_at` its §5.6.2 records
     are what a `sparql` receipt carries (D17). Doc 06 should name the four source
     grades so every client reports them the same way.
+11. **A bounded SPARQL tool for agents, and the ceiling on the intent document.**
+    Raised 2026-09-10, after phase A closed, from a worry put plainly: the goal is a
+    client surface that makes agents supremely effective at finding, querying, combining
+    and deriving from OKN graphs, and three things in this plan could work against that.
+    *(i)* The multi-pattern intent (C4, `notes/intent.md`) risks becoming a second
+    SPARQL — a bespoke JSON that no model has seen, validated by nothing but our schema —
+    the moment it grows OPTIONAL, UNION, filter expressions or property paths; doc 06
+    §6.5 already says "LLMs know SPARQL; bespoke JSON is a second language for them".
+    Proposed ceiling: an intent is a list of fetch steps, each pattern optionally bound
+    by a column of an earlier step, and nothing more; combination is SQL over tables,
+    and anything richer is SPARQL through the engine. *(ii)* The library must not grow
+    Comunica's join taxonomy. Its one join-shaped decision is R2 — fetch a pattern whole
+    or push a column as bindings — chosen from counts the server reports exactly, where
+    Comunica must estimate (and mispriced paged sources until kgf-sparql's 2026-09-10
+    fixes); relational joins are DuckDB's. §5.5's "about twenty lines" is the invariant.
+    *(iii)* D16 and §5.4 exclude a `sparql` tool from `kgfq-mcp` on doc 12 §12.5.3's
+    evidence — a passthrough carried 86% of an agent's traffic and the tail died in the
+    client. That evidence predates the budget, the receipt, the native source and the
+    linter. With those in front of it, SPARQL is a bounded operation whose result lands
+    as a graded table: the corpus completes 58 of 94 queries under a 5,000-request budget
+    and every failure is a receipt (§9), and federation across graphs runs through it
+    today. The remaining objection is about the agent's choice — that it reaches for
+    SPARQL first and decomposes never — which a skill and the refusal diagnostics address
+    and absence does not; absence moves the agent to a shell. Proposed: expose `sparql`
+    in `kgfq-mcp` exactly as the CLI does (lint with refusal, budget, receipt, table) and
+    let §8's evaluation measure whether agents choose well between it and decomposition;
+    treat the multi-pattern intent as batching and replay, dropped if fetch steps plus
+    SQL prove enough. Changing (iii) changes D16 and §5.4 and must be recorded there; for
+    the docs, doc 06 §6.5 and doc 12 §12.5.3 would then describe a bounded tool rather
+    than a banned one.
+12. **Doc 06 §6.3's column set should say how a table tells an IRI from a plain
+    literal.** It names `s, p, o, o_lang, o_datatype` and no encoding. kgfq added
+    `o_kind` (C6, changed 2026-09-24) rather than spell out `xsd:string` on every
+    plain literal. When the server ships Parquet (D8), the same question decides whether
+    it sends a kind column, or a spelled-out datatype the client strips.
+13. **Doc 04's summary card lists "top classes", and a size ranking hides small
+    reference classes.** SCALES' 94 `jxdm:Court` entities, with their ZIP codes and
+    kwg county links, are 30th of 31 classes and absent from its card; an agent choosing
+    sources from cards never finds them. Filed as kgf-rs#21 (2026-09-24) with the
+    proposal: list every class when a graph has at most ~50 (32 of the 44 live graphs),
+    and above that say how many are left out. Doc 04 may want the rule stated.
 
 ## 12. Non-goals
 

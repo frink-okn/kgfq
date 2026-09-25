@@ -1,4 +1,4 @@
-"""The SPARQL linter (plan §5.6): ``KGFQ001``–``KGFQ012``, usable standalone
+"""The SPARQL linter (plan §5.6): ``KGFQ001``-``KGFQ012``, usable standalone
 (`kgfq lint`), by registry CI, and by ``kgfq sparql`` before it launches
 ``kgf-sparql``. It parses algebra, names what the syntax hides, and never
 rewrites."""
@@ -17,6 +17,7 @@ __all__ = [
     "analyze",
     "datasets_of",
     "lint",
+    "lint_shape",
     "parse_header",
 ]
 

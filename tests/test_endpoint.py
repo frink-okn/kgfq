@@ -7,6 +7,8 @@ import pytest
 from kgfq.client.endpoint import Count, Endpoint, Pattern, Release
 from kgfq.client.errors import KgfError
 from kgfq.client.terms import Iri, Literal, Var, format_term
+from tests.conftest import spawn_server
+from tests.proxy import Proxy
 
 EX = "http://example.org/"
 RDFS = "http://www.w3.org/2000/01/rdf-schema#"
@@ -188,9 +190,6 @@ def test_summary_card(ep, rel):
 def test_links_behind_a_public_base_prefix_resolve_against_the_host(chem, tmp_path):
     """A gateway mounts the server under /kgf and the server emits links that
     carry the prefix (doc 03 §3.2); appending them to the origin would double it."""
-    from tests.conftest import spawn_server
-    from tests.proxy import Proxy
-
     prefixed = spawn_server(
         chem.root, tmp_path / "prefixed.log", public_base="http://placeholder/kgf"
     )
@@ -215,8 +214,6 @@ def _all_records(e, rel):
 
 
 def test_query_refused_by_a_real_proxy_falls_back_to_post(chem):
-    from tests.proxy import Proxy
-
     proxy = Proxy(chem.origin, prefix="", refuse_query=True)
     try:
         e = Endpoint(proxy.origin)

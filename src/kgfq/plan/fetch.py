@@ -18,7 +18,7 @@ from ..client.statistics import Statistics
 from ..client.terms import Term, format_term, term_columns
 
 PLAN_SCHEMA = "kgfq.plan/1"
-TABLE_COLUMNS = ["s", "p", "o", "o_lang", "o_datatype"]
+TABLE_COLUMNS = ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
 
 
 @dataclass(slots=True)
@@ -174,8 +174,9 @@ def execute_fetch(
         o = row.get(names.get("o", "")) if "o" in names else const.get("o")
         out["s"].append(term_columns(s)[0])
         out["p"].append(term_columns(p)[0])
-        ov, ol, od = term_columns(o)
+        ov, ok, ol, od = term_columns(o)
         out["o"].append(ov)
+        out["o_kind"].append(ok)
         out["o_lang"].append(ol)
         out["o_datatype"].append(od)
         if binding is not None:

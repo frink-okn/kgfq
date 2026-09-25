@@ -1,15 +1,15 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/1",
+  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/2",
   "title": "kgfq receipt (C6, D5, D17)",
-  "description": "Attached to every table as a sidecar and in the Parquet footer under `kgfq.receipt`. What makes an approximate answer a finding rather than a bug.",
+  "description": "Attached to every table as a sidecar and in the Parquet footer under `kgfq.receipt`, and written as a sidecar alone for a step that produced no table (a SPARQL run aborted at a budget). What makes an approximate answer a finding rather than a bug. Version 2 adds kind `sparql`: multiple graded sources, the query as run, the lint and normalization record, the engine's outcome and budget, requests folded by shape, and a pointer to the engine's own receipt in place of a copy of its request list.",
   "type": "object",
   "required": ["schema", "kind", "grade", "created"],
   "properties": {
-    "schema": {"const": "kgfq.receipt/1"},
-    "kind": {"enum": ["fetch", "hydrate", "labels", "derived", "import", "resolve"]},
+    "schema": {"const": "kgfq.receipt/2"},
+    "kind": {"enum": ["fetch", "hydrate", "labels", "derived", "import", "resolve", "sparql"]},
     "step": {"type": ["integer", "null"], "description": "The log step that produced the table."},
-    "grade": {"enum": ["bundle", "sparql", "external", "asserted"], "description": "D17 source grade; a derived table takes the minimum over its inputs."},
+    "grade": {"enum": ["bundle", "sparql", "external", "asserted"], "description": "D17 source grade; a derived table takes the minimum over its inputs, a `sparql` run the minimum over its sources."},
     "source": {
       "type": "object",
       "description": "For grade `bundle`: the graph at its pinned release and the origin it was fetched from.",
@@ -23,10 +23,44 @@
         "content_digest": {"type": "string"}
       }
     },
+    "sources": {
+      "type": "array",
+      "description": "For kind `sparql`: every source the engine was given, each graded — a bundle graph at its pinned release (`kgf`) or a SPARQL endpoint named explicitly (`sparql`).",
+      "items": {
+        "type": "object",
+        "required": ["kind", "grade", "url"],
+        "properties": {
+          "kind": {"enum": ["kgf", "sparql"]},
+          "grade": {"type": "string"},
+          "url": {"type": "string", "description": "The fragment URL of the pinned release, or the endpoint."},
+          "origin": {"type": "string"}, "dataset": {"type": "string"}, "dataset_iri": {"type": ["string", "null"]},
+          "version": {"type": "string"}, "content_digest": {"type": "string"}
+        }
+      }
+    },
+    "query": {"type": "string", "description": "For kind `sparql`: the query text as run, verbatim."},
+    "original_query": {"type": ["string", "null"], "description": "The text as given, when `--normalize` changed it."},
+    "normalizations": {
+      "type": "array",
+      "description": "One record per rewrite `--normalize` considered: applied or not, and why.",
+      "items": {"type": "object", "required": ["rule", "variable", "applied"], "properties": {
+        "rule": {"type": "string"}, "variable": {"type": "string"}, "applied": {"type": "boolean"},
+        "rewrite": {"type": "string"}, "equivalence": {"type": "string"}, "reason": {"type": "string"}
+      }}
+    },
+    "lint": {"type": "object", "description": "The linter's threshold and every diagnostic over the query as run.", "properties": {"threshold": {"type": "integer"}, "diagnostics": {"type": "array", "items": {"type": "object"}}}},
+    "engine": {"type": "object", "description": "For kind `sparql`: the engine's own versions (`kgf_sparql`, `comunica`, `node`), the command line as run, and its exit code."},
+    "budget": {"type": "object", "description": "The plan-level budget the run was given: `max_requests`, `max_bytes`, `max_rows`, `timeout_s` (null = unlimited), and the engine's `max_connections`."},
+    "outcome": {
+      "type": "object",
+      "description": "The engine's outcome verbatim: `contract` is `complete` (the output is exactly the solution set), `aborted` (with `budget`, the one that ended it) or `error` (with `error`); `rows` written; `result_type` bindings, quads or boolean.",
+      "properties": {"contract": {"enum": ["complete", "aborted", "error"]}, "rows": {"type": "integer"}, "budget": {"type": "string"}, "error": {"type": "string"}, "result_type": {"type": "string"}}
+    },
     "intent": {"type": "object"},
     "plan": {"type": ["object", "null"], "description": "The kgfq.plan/1 document that was executed."},
     "requests": {
       "type": "array",
+      "description": "Every request the library made, for kinds it makes itself. A `sparql` receipt does not copy the engine's list (see `requests_by_shape` and `engine_receipt`).",
       "items": {
         "type": "object",
         "required": ["method", "url", "status"],
@@ -39,9 +73,24 @@
         }
       }
     },
-    "totals": {"type": "object", "properties": {"requests": {"type": "integer"}, "bytes_wire": {"type": "integer"}, "bytes_decoded": {"type": "integer"}, "elapsed_ms": {"type": "number"}}},
+    "requests_by_shape": {
+      "type": "array",
+      "description": "For kind `sparql`: the engine's request list folded by method, route, bound positions, predicate and whether bindings were pushed — counts, bytes, time and statuses per shape, most requests first.",
+      "items": {"type": "object", "properties": {
+        "method": {"type": "string"}, "url": {"type": "string"}, "bound": {"type": "string"}, "predicate": {"type": ["string", "null"]},
+        "bindings": {"type": "boolean"}, "requests": {"type": "integer"}, "bytes": {"type": "integer"}, "elapsed_ms": {"type": "number"},
+        "statuses": {"type": "object"}, "failed": {"type": "integer"}
+      }}
+    },
+    "engine_receipt": {
+      "type": ["object", "null"],
+      "description": "For kind `sparql`: where the engine's receipt (`kgf-sparql.receipt/1`, every request with its id) is filed, relative to the workspace, and its digest.",
+      "properties": {"path": {"type": "string"}, "sha256": {"type": "string"}, "schema": {"type": ["string", "null"]}}
+    },
+    "totals": {"type": "object", "properties": {"requests": {"type": "integer"}, "bindings_requests": {"type": "integer"}, "schema_requests": {"type": "integer"}, "bytes_wire": {"type": ["integer", "null"]}, "bytes_decoded": {"type": "integer"}, "elapsed_ms": {"type": "number"}}},
+    "statistics": {"type": "object", "description": "For kind `sparql`: whether VoID statistics were on and how many `/schema` requests planning cost."},
     "completeness": {"type": "object", "properties": {"complete": {"type": "boolean"}, "truncation_reasons": {"type": "array", "items": {"type": "string"}}}},
-    "approximations": {"type": "array", "items": {"type": "string"}, "description": "Every approximation made, in words (R3 limit pushdown, etc.)."},
+    "approximations": {"type": "array", "items": {"type": "string"}, "description": "Every approximation made, in words (R3 limit pushdown, a row budget, etc.)."},
     "inputs": {"type": "object", "description": "Each input classified derived/asserted/external (see log-record.schema.json).", "additionalProperties": {"type": "object"}},
     "statement": {"type": "string", "description": "For kind `derived`: the SQL that produced the table."},
     "table": {"type": "string"}, "rows": {"type": "integer"}, "columns": {"type": "array", "items": {"type": "string"}},

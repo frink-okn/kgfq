@@ -18,7 +18,6 @@ from typing import Any
 from .store import Workspace
 
 LOG_SCHEMA = "kgfq.log/1"
-RECEIPT_SCHEMA = "kgfq.receipt/1"
 GRADES = ("bundle", "sparql", "external", "asserted")
 
 

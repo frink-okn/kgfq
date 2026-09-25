@@ -37,6 +37,9 @@ def _binary(env: str, *candidates: Path) -> Path | None:
 
 KGF = _binary("KGFQ_KGF", SOURCE / "kgf-rs/target/release/kgf", SOURCE / "kgf-rs/target/debug/kgf")
 HDTC = _binary("KGFQ_HDTC", SOURCE / "hdtc/target/release/hdtc", SOURCE / "hdtc/target/debug/hdtc")
+# kgf-sparql is a Node program: its package entry in the sibling checkout, run by node,
+# unless KGFQ_KGF_SPARQL names an executable or entry of its own
+KGF_SPARQL_JS = SOURCE / "kgf-sparql/packages/kgf-sparql/bin/kgf-sparql.js"
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
@@ -142,6 +145,19 @@ def servers(tmp_path_factory: pytest.TempPathFactory) -> Iterator[dict[str, Serv
     yield started
     for s in started.values():
         s.stop()
+
+
+@pytest.fixture(scope="session")
+def kgf_sparql() -> str:
+    """The engine ``kgfq sparql`` launches, made findable through its environment
+    variable for the session; tests skip when there is none to launch."""
+    if not os.environ.get("KGFQ_KGF_SPARQL"):
+        if not (KGF_SPARQL_JS.is_file() and shutil.which("node")):
+            pytest.skip(
+                "needs kgf-sparql: set KGFQ_KGF_SPARQL, or build ../kgf-sparql and have node on PATH"
+            )
+        os.environ["KGFQ_KGF_SPARQL"] = str(KGF_SPARQL_JS)
+    return os.environ["KGFQ_KGF_SPARQL"]
 
 
 @pytest.fixture(scope="session")

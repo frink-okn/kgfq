@@ -85,6 +85,7 @@ def test_count_and_fetch_with_values_file(ws, tmp_path):
         "s",
         "p",
         "o",
+        "o_kind",
         "o_lang",
         "o_datatype",
         "binding",
@@ -125,7 +126,7 @@ def test_fetch_to_csv_path_with_receipt_beside_it(ws, tmp_path):
     out = tmp_path / "exports" / "labels.csv"
     handle, _ = run("fetch", "chemkg", "? rdfs:label ?", "--out", str(out), workspace=ws)
     assert out.exists() and out.with_name("labels.receipt.json").exists()
-    assert out.read_text().splitlines()[0] == "s,p,o,o_lang,o_datatype"
+    assert out.read_text().splitlines()[0] == "s,p,o,o_kind,o_lang,o_datatype"
     handle, _ = run(
         "fetch", "chemkg", "? rdfs:label ?", "--out", "few", "--max-rows", "5", workspace=ws
     )

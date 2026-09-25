@@ -45,9 +45,10 @@ uv run pytest
   to `kgfq.log.jsonl`; every table gets a receipt beside it and in its Parquet
   footer; every receipt carries a source grade (D17). DuckDB is the engine, not the
   store; nothing but `kgfq/workspace` (C8, when it lands) opens one.
-- Fetched tables always have the columns `s, p, o, o_lang, o_datatype` (plus
-  `binding`), whatever the caller named its variables — every fetched table is a
-  set of triples.
+- Fetched tables always have the columns `s, p, o, o_kind, o_lang, o_datatype`
+  (plus `binding`), whatever the caller named its variables — every fetched table
+  is a set of triples. `o_kind` states iri, literal or bnode; a plain literal has
+  no datatype stored (never `xsd:string` spelled out).
 - Caps and budgets come from each endpoint's service descriptor; never hard-code
   one. State is per endpoint; the session is a set of graphs, never grouped by
   server (D14).
