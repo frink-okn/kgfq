@@ -61,7 +61,7 @@ def test_select_files_a_table_a_receipt_and_the_engine_receipt(ws, tmp_path):
     assert set(table.column("l_lang").to_pylist()) == {"en"}
     assert table.column("c_datatype").to_pylist() == [None] * 12
     receipt, _ = run("receipt", "labels", workspace=ws)
-    assert receipt["schema"] == "kgfq.receipt/2" and receipt["kind"] == "sparql"
+    assert receipt["schema"] == "kgfq.receipt/3" and receipt["kind"] == "sparql"
     [source] = receipt["sources"]
     assert source["dataset"] == "chemkg" and source["version"] == "2026-09-01"
     assert (
@@ -69,6 +69,7 @@ def test_select_files_a_table_a_receipt_and_the_engine_receipt(ws, tmp_path):
     )
     assert receipt["outcome"]["contract"] == "complete" and receipt["outcome"]["rows"] == 12
     assert receipt["totals"]["requests"] >= 2 and receipt["completeness"]["complete"] is True
+    assert receipt["completeness"]["incomplete_because"] == []
     # the engine's request list is not copied: it is filed whole beside the table and pointed at
     assert "requests" not in receipt
     assert receipt["requests_by_shape"] and receipt["requests_by_shape"][0]["requests"] >= 1
@@ -146,6 +147,7 @@ def test_abort_at_a_budget_is_a_receipt_without_a_table(ws, tmp_path):
         and receipt["outcome"]["budget"] == "max_requests"
     )
     assert receipt["completeness"]["complete"] is False and receipt["engine_receipt"]["path"]
+    assert receipt["completeness"]["incomplete_because"] == ["max_requests"]
     assert receipt["engine"]["exit_code"] == 3
     log, _ = run("log", workspace=ws)
     [record] = log["steps"]
@@ -196,6 +198,7 @@ def test_row_budget_writes_the_rows_with_an_approximation(ws, tmp_path):
     assert pq.read_table(ws / "tables" / "few.parquet").num_rows == 3
     receipt, _ = run("receipt", "few", workspace=ws)
     assert receipt["completeness"]["complete"] is False and receipt["approximations"]
+    assert receipt["completeness"]["incomplete_because"] == ["max_rows"]
 
 
 def test_refusal_above_the_threshold_or_at_a_strong_diagnostic_unless_forced(ws, tmp_path):

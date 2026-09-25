@@ -97,6 +97,21 @@ def test_count_and_fetch_with_values_file(ws, tmp_path):
     assert receipt["totals"]["requests"] >= 1 and all(r["request_id"] for r in receipt["requests"])
 
 
+def test_fetch_max_rows_is_an_approximation_only_when_rows_remained(ws):
+    handle, _ = run(
+        "fetch", "chemkg", "?c ex:affects ?g", "--max-rows", "5", "--out", "few", workspace=ws
+    )
+    assert handle["rows"] == 5 and handle["complete"] is False
+    assert "--max-rows 5" in handle["approximations"][0]
+    receipt, _ = run("receipt", "few", workspace=ws)
+    assert receipt["schema"] == "kgfq.receipt/3"
+    assert receipt["completeness"]["incomplete_because"] == ["max_rows"]
+    handle, _ = run(
+        "fetch", "chemkg", "?c ex:affects ?g", "--max-rows", "24", "--out", "all", workspace=ws
+    )
+    assert handle["rows"] == 24 and handle["complete"] is True and handle["approximations"] == []
+
+
 def test_fetch_logs_and_classifies_inputs(ws, tmp_path):
     handle, _ = run("fetch", "chemkg", "? rdfs:label ?", workspace=ws)
     assert handle["table"] == "label" and handle["rows"] == 12

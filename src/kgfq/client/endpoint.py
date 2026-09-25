@@ -11,8 +11,11 @@ specifies, with the three benchmark traps absorbed here and nowhere else.
 
 Every request is observed: a :class:`RequestRecord` per response, with the
 server's ``KGF-Request-Id``, so receipts (C6) and the access-log census can
-join on it. Caps and budgets come from the service descriptor and are never
-hard-coded (D14: they are per endpoint).
+join on it. A paged read also marks what the client did with each response —
+its cursor followed, or the read stopped there with rows left — since a table's
+completeness is that, not the server's per-page flag (:class:`Paged`). Caps and
+budgets come from the service descriptor and are never hard-coded (D14: they
+are per endpoint).
 """
 
 from __future__ import annotations
@@ -112,7 +115,11 @@ class Count:
 
 @dataclass(slots=True)
 class RequestRecord:
-    """One response, as the receipt and the access-log census see it."""
+    """One response, as the receipt and the access-log census see it.
+
+    ``complete`` and ``truncation_reason`` are the server's, verbatim.
+    ``continued`` and ``stopped`` are the client's: it followed this response's
+    cursor, or its read ended here while the server still had rows, and why."""
 
     method: str
     url: str
@@ -125,6 +132,8 @@ class RequestRecord:
     truncation_reason: str | None
     bindings: int | None = None
     rows: int | None = None
+    continued: bool = False
+    stopped: str | None = None
 
 
 @dataclass(slots=True)
@@ -174,6 +183,58 @@ def _header_bool(value: str | None) -> bool | None:
     if value is None:
         return None
     return value.strip().lower() == "true"
+
+
+class Paged[T](Iterator[T]):
+    """The rows of one paged read, and, once its caller is done, whether it left
+    any the server still had. A generator cannot say that after its caller breaks
+    off; this can, without another request.
+
+    ``pages`` yields each response with its rows and whether it is the read's
+    last: its own final page, and for bindings the final chunk's. Following a
+    cursor marks that response ``continued``. A caller that stops early says why
+    with :meth:`stop`; when rows remained — the rest of the page in hand, a cursor
+    not followed, a chunk not sent — the response it stopped at is marked
+    ``stopped``. A receipt reads a table's completeness from those marks (C6)."""
+
+    def __init__(
+        self, pages: Iterator[tuple[Response, list[T], bool]], *, max_rows: int | None = None
+    ) -> None:
+        self._pages = pages
+        self._max_rows = max_rows
+        self._page: Response | None = None
+        self._rows: list[T] = []
+        self._at = 0
+        self._last = False
+        self.taken = 0
+
+    def __next__(self) -> T:
+        if self._max_rows is not None and self.taken >= self._max_rows:
+            self.stop("max_rows")
+            raise StopIteration
+        while self._at >= len(self._rows):
+            if self._last:
+                raise StopIteration
+            page = next(self._pages, None)
+            if page is None:  # no chunk to send: an empty bindings list
+                self._last = True
+                raise StopIteration
+            self._page, self._rows, self._last = page
+            self._at = 0
+        row = self._rows[self._at]
+        self._at += 1
+        self.taken += 1
+        return row
+
+    @property
+    def exhausted(self) -> bool:
+        """The read's last page is in hand and every row of it taken."""
+        return self._last and self._at >= len(self._rows)
+
+    def stop(self, reason: str) -> None:
+        """The caller is done. Mark the response it stopped at, if rows remained."""
+        if self._page is not None and not self.exhausted and self._page.record.stopped is None:
+            self._page.record.stopped = reason
 
 
 class Endpoint:
@@ -431,6 +492,7 @@ class Endpoint:
                     return
             if page.complete or not page.next:
                 return
+            page.record.continued = True
             cursor = page.next
 
     def fragment_page(
@@ -460,21 +522,22 @@ class Endpoint:
         limit: int | None = None,
         max_rows: int | None = None,
         extra: Mapping[str, Any] | None = None,
-    ) -> Iterator[dict[str, Term]]:
+    ) -> Paged[dict[str, Term]]:
         """Rows keyed by the caller's variable names, paged transparently."""
         names = pattern.variables()
-        cursor = None
-        yielded = 0
-        while True:
-            page = self.fragment_page(release, pattern, limit=limit, cursor=cursor, extra=extra)
-            for row in page.body.get("rows", []):
-                yield _rekey(row, names)
-                yielded += 1
-                if max_rows is not None and yielded >= max_rows:
+
+        def pages() -> Iterator[tuple[Response, list[dict[str, Term]], bool]]:
+            cursor = None
+            while True:
+                page = self.fragment_page(release, pattern, limit=limit, cursor=cursor, extra=extra)
+                last = bool(page.complete or not page.next)
+                yield page, [_rekey(row, names) for row in page.body.get("rows", [])], last
+                if last:
                     return
-            if page.complete or not page.next:
-                return
-            cursor = page.next
+                page.record.continued = True
+                cursor = page.next
+
+        return Paged(pages(), max_rows=max_rows)
 
     def count(self, release: Release, pattern: Pattern) -> Count:
         body = self.get(release.link("count"), pattern.as_params()).body
@@ -524,33 +587,40 @@ class Endpoint:
         rows: Sequence[Sequence[Term]],
         *,
         limit: int | None = None,
-    ) -> Iterator[tuple[int, dict[str, Term]]]:
+    ) -> Paged[tuple[int, dict[str, Term]]]:
         """``QUERY /fragment`` with bindings: yields ``(index, row)`` where
         ``index`` is into the caller's ``rows`` and ``row`` is keyed by the
         caller's variable names. Chunking and cross-page cursors are handled
-        here; the server's chunk-relative ``binding`` never escapes."""
+        here; the server's chunk-relative ``binding`` never escapes. The read's
+        last page is the final chunk's: a caller that stops after an earlier
+        chunk's last page has left the unsent chunks behind."""
         names = pattern.variables()
         template: dict[str, Any] = {
             "pattern": pattern.as_body(),
             "limit": limit or self.cap("max_limit", 10000),
         }
-        for offset, chunk in self._chunks(rows, vars_, template, "max_bindings"):
-            body = dict(template)
-            body["bindings"] = {"vars": [f"?{v}" for v in vars_], "rows": chunk}
-            cursor = None
-            while True:
-                if cursor:
-                    body["cursor"] = cursor
-                else:
-                    body.pop("cursor", None)
-                page = self.query(release.link("fragment"), body)
-                page.record.bindings = len(chunk)
-                page.record.rows = len(page.body.get("rows", []))
-                for row in page.body.get("rows", []):
-                    yield offset + int(row["binding"]), _rekey(row, names)
-                if page.complete or not page.next:
-                    break
-                cursor = page.next
+
+        def pages() -> Iterator[tuple[Response, list[tuple[int, dict[str, Term]]], bool]]:
+            for offset, chunk in self._chunks(rows, vars_, template, "max_bindings"):
+                final_chunk = offset + len(chunk) >= len(rows)
+                body = dict(template)
+                body["bindings"] = {"vars": [f"?{v}" for v in vars_], "rows": chunk}
+                while True:
+                    page = self.query(release.link("fragment"), body)
+                    page.record.bindings = len(chunk)
+                    page.record.rows = len(page.body.get("rows", []))
+                    end = bool(page.complete or not page.next)
+                    got = [
+                        (offset + int(row["binding"]), _rekey(row, names))
+                        for row in page.body.get("rows", [])
+                    ]
+                    yield page, got, end and final_chunk
+                    if end:
+                        break
+                    page.record.continued = True
+                    body["cursor"] = page.next
+
+        return Paged(pages())
 
     def count_bindings(
         self,
@@ -575,6 +645,7 @@ class Endpoint:
                     out[offset + int(entry["binding"])] = Count.from_json(entry["count"])
                 if page.complete or not page.next:
                     break
+                page.record.continued = True
                 cursor = page.next
         return [c if c is not None else Count(0, True) for c in out]
 

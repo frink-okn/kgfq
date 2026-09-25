@@ -87,13 +87,20 @@ def sparql_receipt(
     approximations: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Wrap one engine run. ``engine_receipt`` is the pointer — path relative to
-    the workspace, sha256, schema — to the receipt the engine wrote."""
+    the workspace, sha256, schema — to the receipt the engine wrote.
+
+    Completeness is the engine's contract, never its responses' flags: 27 of the
+    corpus's 58 complete runs have ``page_limit`` responses whose cursors the
+    engine followed. Those reasons are kept as the trace; ``incomplete_because``
+    names the budget that ended an aborted run, or ``error``."""
     doc = run.receipt or {}
     outcome = dict(doc.get("outcome") or {})
     if not doc:
         outcome = {"contract": "error", "rows": 0, "error": run.error}
     elif outcome.get("contract") == "error" and not outcome.get("error"):
         outcome["error"] = run.error
+    contract = outcome.get("contract")
+    because = [] if contract == "complete" else [str(outcome.get("budget") or contract)]
     requests = list(doc.get("requests") or [])
     totals = dict(doc.get("totals") or {})
     wire = [int(r["bytes_wire"]) for r in requests if r.get("bytes_wire") is not None]
@@ -131,7 +138,8 @@ def sparql_receipt(
         "requests_by_shape": requests_by_shape(requests),
         "engine_receipt": engine_receipt,
         "completeness": {
-            "complete": outcome.get("contract") == "complete",
+            "complete": contract == "complete",
+            "incomplete_because": because,
             "truncation_reasons": truncations,
         },
         "approximations": list(approximations),

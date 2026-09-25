@@ -335,7 +335,7 @@ class Cli:
                 ep, rel, pattern, plan, vars_=vars_, rows=rows, max_rows=a.max_rows
             )
             approximations = []
-            if a.max_rows is not None and table.num_rows >= a.max_rows:
+            if any(r.stopped == "max_rows" for r in t.records):
                 approximations.append(
                     f"stopped at --max-rows {a.max_rows}: which rows, not how many, is unspecified (R3)"
                 )
@@ -572,7 +572,7 @@ class Cli:
         if read_error:
             contract = "error"
             receipt["outcome"] = {**receipt["outcome"], "contract": "error", "error": read_error}
-            receipt["completeness"]["complete"] = False
+            receipt["completeness"].update(complete=False, incomplete_because=["error"])
         error = receipt["outcome"].get("error") if contract == "error" else None
         if table is not None:
             info = self.workspace.write_table(out, table, receipt)

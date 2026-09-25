@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/2",
+  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/3",
   "title": "kgfq receipt (C6, D5, D17)",
-  "description": "Attached to every table as a sidecar and in the Parquet footer under `kgfq.receipt`, and written as a sidecar alone for a step that produced no table (a SPARQL run aborted at a budget). What makes an approximate answer a finding rather than a bug. Version 2 adds kind `sparql`: multiple graded sources, the query as run, the lint and normalization record, the engine's outcome and budget, requests folded by shape, and a pointer to the engine's own receipt in place of a copy of its request list.",
+  "description": "Attached to every table as a sidecar and in the Parquet footer under `kgfq.receipt`, and written as a sidecar alone for a step that produced no table (a SPARQL run aborted at a budget). What makes an approximate answer a finding rather than a bug. Version 2 adds kind `sparql`: multiple graded sources, the query as run, the lint and normalization record, the engine's outcome and budget, requests folded by shape, and a pointer to the engine's own receipt in place of a copy of its request list. Version 3 reads `completeness` from what the client did with each response that carried the table's rows, not from the server's per-page flag: a page limit or a budget interruption (`time_budget`, `response_bytes`) whose cursor was followed no longer makes a table incomplete, and a read stopped with rows left (`max_rows`) always does. It adds `completeness.incomplete_because` and each request's `continued` and `stopped`.",
   "type": "object",
   "required": ["schema", "kind", "grade", "created"],
   "properties": {
-    "schema": {"const": "kgfq.receipt/2"},
+    "schema": {"const": "kgfq.receipt/3"},
     "kind": {"enum": ["fetch", "hydrate", "labels", "derived", "import", "resolve", "sparql"]},
     "step": {"type": ["integer", "null"], "description": "The log step that produced the table."},
     "grade": {"enum": ["bundle", "sparql", "external", "asserted"], "description": "D17 source grade; a derived table takes the minimum over its inputs, a `sparql` run the minimum over its sources."},
@@ -69,7 +69,9 @@
           "method": {"type": "string"}, "url": {"type": "string"}, "status": {"type": "integer"},
           "bytes_wire": {"type": "integer"}, "bytes_decoded": {"type": "integer"}, "elapsed_ms": {"type": "number"},
           "complete": {"type": ["boolean", "null"]}, "truncation_reason": {"type": ["string", "null"]},
-          "bindings": {"type": ["integer", "null"]}, "rows": {"type": ["integer", "null"]}
+          "continued": {"type": "boolean", "description": "The client followed this response's cursor."},
+          "stopped": {"type": ["string", "null"], "description": "The read ended at this response while the server still had rows — the rest of the page, a cursor not followed, a bindings chunk not sent — and why (`max_rows`)."},
+          "bindings": {"type": ["integer", "null"]}, "rows": {"type": ["integer", "null"], "description": "Rows this response carried; null for a response that carried none of the table's (a `/count`, a `/schema` page)."}
         }
       }
     },
@@ -89,7 +91,15 @@
     },
     "totals": {"type": "object", "properties": {"requests": {"type": "integer"}, "bindings_requests": {"type": "integer"}, "schema_requests": {"type": "integer"}, "bytes_wire": {"type": ["integer", "null"]}, "bytes_decoded": {"type": "integer"}, "elapsed_ms": {"type": "number"}}},
     "statistics": {"type": "object", "description": "For kind `sparql`: whether VoID statistics were on and how many `/schema` requests planning cost."},
-    "completeness": {"type": "object", "properties": {"complete": {"type": "boolean"}, "truncation_reasons": {"type": "array", "items": {"type": "string"}}}},
+    "completeness": {
+      "type": "object",
+      "description": "Read from the responses that carried the table's rows; the plan's `/count` and the statistics' `/schema` pages are evidence for the plan, not the table. For kind `sparql`, the engine's contract.",
+      "properties": {
+        "complete": {"type": "boolean", "description": "False only when the read left rows the server still had: it stopped at a response with rows remaining, or a response said `complete: false` and was not a `page_limit`, `time_budget` or `response_bytes` whose cursor was followed (doc 03 §3.6: a cursor resumes with no loss)."},
+        "incomplete_because": {"type": "array", "items": {"type": "string"}, "description": "Why the table is incomplete: a client stop (`max_rows`), a server truncation not continued, or for kind `sparql` the budget that ended the run or `error`. Empty when complete."},
+        "truncation_reasons": {"type": "array", "items": {"type": "string"}, "description": "Every truncation reason those responses gave, continued or not: the trace. `page_limit` here with `complete: true` is a paged read followed to its end; so is a continued `time_budget` or `response_bytes`."}
+      }
+    },
     "approximations": {"type": "array", "items": {"type": "string"}, "description": "Every approximation made, in words (R3 limit pushdown, a row budget, etc.)."},
     "inputs": {"type": "object", "description": "Each input classified derived/asserted/external (see log-record.schema.json).", "additionalProperties": {"type": "object"}},
     "statement": {"type": "string", "description": "For kind `derived`: the SQL that produced the table."},

@@ -161,7 +161,9 @@ def execute_fetch(
     max_rows: int | None = None,
 ) -> pa.Table:
     """Run the plan's data step and return the triples as an Arrow table with
-    the doc 06 §6.3 columns, plus ``binding`` when bindings were supplied."""
+    the doc 06 §6.3 columns, plus ``binding`` when bindings were supplied.
+    Stopping at ``max_rows`` is said to the read, which marks the response it
+    stopped at when the server still had rows; the receipt reads that (C6)."""
     step = plan.steps[-1]
     names = pattern.variables()
     const = {pos: t for pos, t in pattern.bound().items()}
@@ -183,9 +185,11 @@ def execute_fetch(
             binding_col.append(binding)
 
     if step.op == "bindings":
-        for index, row in endpoint.bindings(release, pattern, list(vars_ or []), rows or []):
+        bound = endpoint.bindings(release, pattern, list(vars_ or []), rows or [])
+        for index, row in bound:
             emit(row, index)
             if max_rows is not None and len(out["s"]) >= max_rows:
+                bound.stop("max_rows")
                 break
     else:
         wanted: dict[str, dict[str, int]] | None = None
@@ -194,7 +198,8 @@ def execute_fetch(
             for i, r in enumerate(rows):
                 for v, t in zip(vars_ or [], r, strict=True):
                     wanted.setdefault(v, {}).setdefault(format_term(t), i)
-        for row in endpoint.fragment(release, pattern, max_rows=None if wanted else max_rows):
+        scan = endpoint.fragment(release, pattern)
+        for row in scan:
             binding = None
             if wanted:
                 hit = True
@@ -208,6 +213,7 @@ def execute_fetch(
                     continue
             emit(row, binding if wanted else None)
             if max_rows is not None and len(out["s"]) >= max_rows:
+                scan.stop("max_rows")
                 break
     arrays = {c: pa.array(out[c], type=pa.string()) for c in TABLE_COLUMNS}
     if rows is not None:

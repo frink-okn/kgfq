@@ -579,6 +579,40 @@ kind rather than infer it, and a browser client (the kgf-web sketch in the sessi
 2026-09-24) stores its tables the same way. Tables written before this have no `o_kind`
 and hash differently.
 
+*Decided 2026-09-24 — what `complete` means.* Schema `kgfq.receipt/3`. A table is
+incomplete only when its read left rows the server still had — it stopped at a response
+with rows remaining (`max_rows`: the rest of the page, a cursor not followed, a bindings
+chunk not sent), or a response said `complete: false` and was not a page limit or budget
+interruption whose cursor was followed. It had been the conjunction of every response's
+flag in the step, which receipted every paged read incomplete: kwg-places
+`?z <…/ontology/hasGEOID> ?zip` on `apps.okn.us/kgf`, 33,791 rows (the exact count) over
+four pages of 10,000, came back `complete: false`; statistics paging `/schema` in a
+fresh workspace did the same to any fetch; and one complete page cut short by
+`--max-rows` read complete. The facts are recorded where they are known. The endpoint's
+`Paged` read marks a response `continued` when it follows the cursor and `stopped` when
+its caller stops with rows remaining, which a generator cannot say once its caller
+breaks off. The receipt reads only the responses that carried rows: the plan's `/count`
+and the statistics' pages are the plan's evidence. `truncation_reasons` stays the trace,
+every reason those responses gave; `incomplete_because` says what the table is missing
+for. A `sparql` receipt's completeness was already the engine's contract, and it now
+names the budget that ended the run, or `error`. A followed cursor counts as continued
+without loss after `page_limit`, `time_budget` or `response_bytes` (`CONTINUABLE`). The
+first draft admitted `page_limit` alone, the only reason among the corpus's 9,671
+truncated engine responses (27 of its 58 complete runs have one). *Widened 2026-09-25*
+on doc 03 §3.6's promise that any cursor resumes with no loss and no duplication. kgf-rs
+`92af565` backs it: `TruncationReason::resumes()` allows a cursor on those three and
+`candidate_budget`, never on `cell_overflow` or `partial_failure`. Its test
+`a_response_stops_at_the_byte_budget_and_resumes_from_where_it_stopped` pages a fragment
+on a 200-byte budget back to the unrestricted fragment. `time_budget` is declared there
+but not yet emitted. `candidate_budget` is not admitted. A budget stop without a cursor,
+which kgf-rs also makes, stays incomplete, since nothing was followed. The `--max-rows`
+approximation is written only when rows were left, so a cap equal to the count no longer
+contradicts `complete: true`. Tested in `tests/test_fetch.py` at five-row pages and in
+three bindings chunks that span pages: complete when read to the end; stopped mid-page,
+at a page boundary, mid the last page and after an earlier chunk, incomplete; stopped at
+the last row, complete. The widened set is tested over records: `kgf serve` takes no
+budget, and the fixtures fit its 64 MB and 2 s.
+
 *Planned 2026-09-24 — the unmatched report.* A bound fetch (`fetch --values`,
 `fetch(ds, pattern, bindings)`, `hydrate`) records in its receipt a `bindings` block:
 `sent`, `matched`, `unmatched`, and `unmatched_sample` (the first eight, in request
