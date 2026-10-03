@@ -96,7 +96,7 @@ plan can be checked against them rather than against taste:
   label filter with the exact literal took one query from 14,593 to 384 requests; a
   namespace filter over `?p` replaced by six `VALUES` predicates from `/schema` took
   another from a timeout to 701. One query denoted an accidental Cartesian product
-  (kgf-sparql `docs/okn-registry-query-evaluation.md`).
+  (`../kgf-sparql-bench/docs/okn-registry-query-evaluation.md`).
 - **The instrument matters.** `mcp-okn` sent 86% of its traffic as model-authored
   SPARQL through a passthrough tool, and the graph whose docstring taught
   `subClassOf*` had the worst failure rate (doc 12 §12.5.3). The MCP transcript
@@ -111,7 +111,7 @@ the strategy function, DuckDB materialization, receipts, and the MCP server, and
 Python is the best of the three candidates at all four: DuckDB's Python binding is
 the reference one (relations, Arrow, Parquet and Polars interop, `read_json_auto`);
 the MCP SDK is first-party; `mcp-okn`, its benchmark, and the registry-corpus runner
-in `../kgf-sparql/test` are already Python, so the harness and the collaborators'
+in `../kgf-sparql-bench/test` are already Python, so the harness and the collaborators'
 code are continuous with this; and a heuristic planner that will change weekly as
 the benchmark teaches wants the fastest iteration loop available. Distribution is
 `uv tool install kgfq` or `uvx kgfq`. Dependencies: `httpx`, `duckdb`, `pyarrow`,
@@ -1074,7 +1074,7 @@ Three corpora, pinned by commit, with frozen baselines per bundle release
 | corpus | size | what it tests |
 |---|---|---|
 | `mcp-okn/benchmark/dataset.jsonl` at `4e49e2c` | 80 records, 68 runnable; `smoke.py` supplies reference rows | single-graph correctness and cost; its `score.py` is execution-match, column-order independent |
-| `okn-registry/docs/registry/queries` | 89 `.rq` with `#+ tags` | the acceptance suite for `kgfq sparql`; `kgf-sparql/test/registry-corpus.py` is the existing runner to port |
+| `okn-registry/docs/registry/queries` | 89 `.rq` with `#+ tags` | the acceptance suite for `kgfq sparql`; `kgf-sparql-bench/test/registry-corpus.py` is the existing runner to port |
 | `mcp-okn/docs/examples/*` reproducibility records | 468 queries, 14 studies, 39% cross-graph | replay for cross-graph behavior; one study (`Instrument-Criticality`, two graphs, ~38 queries, a second run under another model already checked in) re-run end to end as the doc 06 §6.1 ablation |
 
 Arms, run back to back against the same releases: stock Comunica over brTPF;
@@ -1132,7 +1132,7 @@ grade from their first version (D17).
 results as the kgf-sparql run, every timeout is a budget abort with a receipt, and
 every command has written its log record.
 *Measured 2026-09-10* (`bench/registry_corpus.py`; `bench/registry-corpus-20260910.json`;
-budget 5,000 requests, 256 MiB, 30 s, to match `../kgf-sparql/test/registry-query-results-cli.json`):
+budget 5,000 requests, 256 MiB, 30 s, to match `../kgf-sparql-bench/test/registry-query-results-cli.json`):
 94 of 97 queries run (3 Wikidata skips); 58 complete and 51 non-empty — the same 51 as
 the kgf-sparql run, with the same row counts, and 38 of the 39 determinate bags
 identical (the exception, `nde/dataset-count-by-agent`, is an unordered `GROUP_CONCAT`

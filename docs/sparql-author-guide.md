@@ -3,7 +3,7 @@
 For coding agents and people who bring their own SPARQL to `kgfq sparql`. Every
 rule here is also a linter diagnostic (`kgfq lint`), with the code in brackets,
 and every rule comes from a measurement in the KGF benchmark, not from taste.
-The client-suite report (`../kgf-sparql/docs/kgf-client-suite-query-report.md`)
+The client-suite report (`kgf-client-suite-query-report.md`, beside this guide)
 is the source; this is the same guidance in the order you meet the problems.
 
 The one rule behind all of them: **make selectivity explicit in the algebra.**
