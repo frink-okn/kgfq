@@ -353,6 +353,115 @@ class Cli:
         )
         return 0
 
+    def verbalize(self) -> int:
+        """C13: a verbalization config run against a release — the plan's
+        per-target figures as a table, the sampled texts as a rendering, and the
+        IRIs the config names that the graph does not have. The root cap is the
+        server's rule over the whole plan (targets x n), so it is not restated
+        here: its refusal arrives verbatim and says what to lower."""
+        a = self.args
+        ep, rel = self.resolve(a.dataset)
+        config_text = Path(a.config).read_text() if a.config else None
+        step = self.step(
+            "verbalize",
+            dataset=a.dataset,
+            config=a.config,
+            target=a.target,
+            iris=a.iri or [],
+            n=a.n,
+            seed=a.seed,
+            plan=a.plan,
+            out=a.out,
+        )
+        step.pin(_pin(ep, rel))
+        inputs = {str(a.config): step.input_file(Path(a.config))} if a.config else {}
+        with ep.trace() as t:
+            page = ep.verbalize(
+                rel,
+                config_text=config_text,
+                target=a.target,
+                iris=a.iri or [],
+                n=a.n,
+                seed=a.seed,
+                plan=a.plan,
+            )
+            body: dict[str, Any] = dict(page.body or {})
+            receipt = fetch_receipt(
+                step=step.step,
+                kind="verbalize",
+                release=rel,
+                intent={
+                    "operation": "verbalize",
+                    "mode": body.get("mode"),
+                    "config": a.config or "bundle",
+                    "target": a.target,
+                    "iris": a.iri or [],
+                    "n": a.n,
+                    "seed": a.seed,
+                },
+                plan=None,
+                trace=t,
+                inputs=inputs,
+            )
+        targets: list[dict[str, Any]] = list(body.get("targets") or [])
+        payload: dict[str, Any] = dict(body)
+        step.receipt({k: receipt[k] for k in ("totals", "completeness", "approximations", "grade")})
+        if a.out:
+            if not targets:
+                raise KgfqError(
+                    f"--out files the plan's per-target figures, and mode {body.get('mode')!r} has none"
+                )
+            table = pa.Table.from_pylist(targets)
+            info = write_output(self.workspace, a.out, table, receipt)
+            step.output(
+                table=info["table"],
+                path=info["path"],
+                rows=table.num_rows,
+                content_hash=info["content_hash"],
+            )
+            payload["table"] = {
+                "table": info["table"],
+                "path": info["path"],
+                "rows": table.num_rows,
+                "content_hash": info["content_hash"],
+            }
+        else:
+            step.output(records=len(body.get("records") or []))
+        step.finish()
+        if self.json:
+            self.emit(payload)
+            return 0
+        self._render_verbalize(payload, targets)
+        return 0
+
+    def _render_verbalize(self, payload: dict[str, Any], targets: list[dict[str, Any]]) -> None:
+        """The plan as a table, the texts as paragraphs — they are read, not parsed."""
+        out = self.out
+        if payload.get("unknown"):
+            out.write("unknown — the config names these and the graph has none:\n")
+            for u in payload["unknown"]:
+                out.write(f"  {u.get('at')}: {u.get('iri')}\n")
+            out.write("\n")
+        if targets:
+            header = list(targets[0].keys())
+            self.emit(None, table=[[t.get(k) for k in header] for t in targets], header=header)
+            out.write("\n")
+        for r in payload.get("records") or []:
+            iri = r.get("iri", {}).get("value") if isinstance(r.get("iri"), dict) else r.get("iri")
+            flags = []
+            if r.get("truncated"):
+                flags.append("truncated")
+            if r.get("limited"):
+                flags.append(f"limited {r['limited']}")
+            tail = f", {', '.join(flags)}" if flags else ""
+            out.write(
+                f"== {r.get('target')}  <{iri}>  {r.get('label', '')}  "
+                f"({r.get('chars')} chars, {r.get('lines')} lines{tail})\n"
+            )
+            out.write((r.get("text") or "") + "\n\n")
+        if "table" in payload:
+            out.write(f"filed: {payload['table']['path']}\n")
+
     def count(self) -> int:
         a = self.args
         ep, rel = self.resolve(a.dataset)
@@ -1031,6 +1140,21 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "fetch":
             c.add_argument("--out", help="table name, or a .parquet/.csv/.json path")
             c.add_argument("--max-rows", type=int)
+
+    vb = sub.add_parser(
+        "verbalize",
+        help="run a verbalization config against a release: the plan's figures, the sampled texts",
+    )
+    vb.add_argument("dataset")
+    vb.add_argument(
+        "--config", help="the config, YAML or JSON (default: the one the bundle publishes)"
+    )
+    vb.add_argument("--target", help="one target by name: its sample, or with --plan its figures")
+    vb.add_argument("--iri", action="append", help="render this root under --target (repeatable)")
+    vb.add_argument("-n", type=int, help="roots per target; targets x n is capped by the server")
+    vb.add_argument("--seed", type=int)
+    vb.add_argument("--plan", action="store_true", help="the plan for --target alone")
+    vb.add_argument("--out", help="file the per-target figures: a table name or a path")
 
     sm = sub.add_parser("sample", help="a seeded sample of a pattern")
     sm.add_argument("dataset")

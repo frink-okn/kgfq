@@ -187,6 +187,93 @@ def test_inventory_is_one_ranked_table_from_cached_reads(ws):
     assert log_requests(ws) == 0
 
 
+GENES_CONFIG = """
+targets:
+  gene:
+    type: http://example.org/Gene
+    include_predicates: ['http://example.org/symbol', 'http://example.org/inPathway']
+  pathway:
+    type: http://example.org/Pathway
+    include_predicates: ['http://example.org/nosuch']
+"""
+
+
+def test_verbalize_runs_a_config_and_files_the_plan(ws, tmp_path):
+    """C13: the config goes to the server verbatim; the plan comes back as
+    per-target figures and sampled texts; `unknown[]` names what the config
+    declared that the graph lacks; n is held to the cap; --out files the plan."""
+    config = tmp_path / "genes.verbalize.yaml"
+    config.write_text(GENES_CONFIG)
+    payload, _ = run(
+        "verbalize", "genekg", "--config", str(config), "-n", "2", "--seed", "1", workspace=ws
+    )
+    assert payload["mode"] == "plan" and payload["n"] == 2 and payload["seed"] == 1
+    assert payload["unknown"] == [
+        {"at": "targets.pathway.include_predicates", "iri": "http://example.org/nosuch"}
+    ]
+    by_name = {t["name"]: t for t in payload["targets"]}
+    assert (by_name["gene"]["members"], by_name["gene"]["sampled"]) == (7, 2)
+    assert by_name["pathway"]["members"] == 3
+    gene_records = [r for r in payload["records"] if r["target"] == "gene"]
+    assert len(gene_records) == 2
+    assert all(
+        "symbol: G" in r["text"] and "in pathway: Pathway" in r["text"] for r in gene_records
+    )
+    assert all(r["iri"]["value"].startswith("http://example.org/gene/") for r in gene_records)
+
+    # one root by IRI, under its target: records only, nothing to file
+    payload, _ = run(
+        "verbalize",
+        "genekg",
+        "--config",
+        str(config),
+        "--target",
+        "gene",
+        "--iri",
+        "http://example.org/gene/G1",
+        workspace=ws,
+    )
+    assert payload["mode"] == "iris" and [r["label"] for r in payload["records"]] == ["GENE 1"]
+    _, err = run(
+        "verbalize",
+        "genekg",
+        "--config",
+        str(config),
+        "--target",
+        "gene",
+        "--iri",
+        "http://example.org/gene/G1",
+        "--out",
+        "x",
+        workspace=ws,
+        expect=2,
+    )
+    assert "mode 'iris' has none" in err
+
+    # the root cap is the server's rule over the whole plan (targets x n): verbatim
+    _, err = run("verbalize", "genekg", "--config", str(config), "-n", "60", workspace=ws, expect=2)
+    problem = json.loads(err)
+    assert problem["code"] == "cap_exceeded" and "lower n or name one target" in problem["detail"]
+
+    # --out: the targets as a table, the receipt naming the config as an input
+    payload, _ = run("verbalize", "genekg", "--config", str(config), "--out", "plan", workspace=ws)
+    assert payload["table"]["rows"] == 2
+    table = pq.read_table(ws / "tables" / "plan.parquet")
+    assert table.column("name").to_pylist() == ["gene", "pathway"]
+    assert set(table.column_names) >= {"members", "sampled", "mean_chars", "truncated"}
+    receipt, _ = run("receipt", "plan", workspace=ws)
+    assert receipt["kind"] == "verbalize" and receipt["intent"]["mode"] == "plan"
+    assert receipt["intent"]["config"] == str(config)
+    assert receipt["inputs"][str(config)]["kind"] == "external"
+    assert receipt["completeness"]["complete"] is True and receipt["totals"]["requests"] == 1
+    assert receipt["approximations"] == []
+
+    # no config and a bundle that publishes none: the server's problem document, verbatim
+    _, err = run("verbalize", "genekg", workspace=ws, expect=2)
+    problem = json.loads(err)
+    assert problem["code"] == "malformed_request" and "config is required" in problem["detail"]
+
+
 def log_requests(ws) -> int:
     """Requests the last log step made."""
     log, _ = run("log", "--last", "1", workspace=ws)

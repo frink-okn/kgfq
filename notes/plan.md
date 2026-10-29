@@ -793,6 +793,50 @@ same rows as a tab-separated table with local names were 20,154 — the output
 format, not the table, is where the remaining size is, and `--out` plus any reader
 of Parquet is the answer rather than a second format.
 
+### C13. Verbalize
+
+`/verbalize` run from the client: a verbalization config — the YAML `kgf vectors
+--config` consumes and publishes as `vectors/verbalize.json`, deciding which nodes
+become embedding documents and what text each gets — sent to a release and read back
+as the plan's per-target figures (`members`, `sampled`, `claimed_before`, length
+statistics, `truncated`, `limited`) and the sampled texts themselves. The endpoint is
+ungated: a root's star and the label cascade are artifacts every bundle carries, so
+a fixture with no `vectors` answers it, and a bundle that publishes no config
+answers only when the request brings one. It is in no design document (§11).
+
+What the command owns and what it does not. The config goes to the server **as
+text, verbatim** — never parsed here — so the grammar has one owner and a key it
+does not know is its 400, not ours; the IRIs it names that the graph lacks come back
+as `unknown[]` with the config path each sits at, and the command prints them first.
+The mode is the server's reading of what was named — IRIs under a target, a target
+alone, or neither — and the per-target table exists only in the first two, so
+`--out` in `iris` mode is refused with that sentence. The root cap is a rule over
+the whole plan, `targets × n ≤ max_verbalize_roots`, which a client could restate
+only by parsing the config to count targets; it is not restated, and the server's
+refusal — "lower n or name one target" — arrives verbatim. The plan is a table; the
+texts are a rendering, read with the eyes (`notes/verbalize-skill.md` §5).
+
+Probed 2026-10-29 against a fixture: the config's class key is `type`, not `class`
+(the Rust field is renamed on the wire — the kind of fact a skill hand-copies and
+gets wrong); CURIEs in a config are not expanded and surface as `unknown[]` with
+zero members; a renamed response field renames a column of the filed table rather
+than breaking it, because the targets are filed as the server sent them.
+
+*Verified by:* against a fixture server with a two-target config, the plan's figures
+and two sampled texts per target, `unknown[]` naming a predicate the config declares
+and the graph lacks, one root rendered by IRI, `--out` refused in that mode and
+writing the per-target Parquet in plan mode with the config recorded as an
+`external` input, `targets × n` over the cap relayed as the server's
+`cap_exceeded`, and the bundle-publishes-none refusal verbatim (`tests/test_cli.py`).
+
+*Landed 2026-10-29* as `Endpoint.verbalize` and `kgfq verbalize <dataset>
+[--config f] [--target t] [--iri i …] [-n N] [--seed S] [--plan] [--out name]`,
+receipt kind `verbalize` (`kgfq.receipt/4`), the config file an `external` input of
+the step with its SHA-256. The record's `rows` is the roots rendered, so a truncated
+plan is an incomplete receipt. Not done: a label-cascade default — the server already
+puts the release's `label` role cascade behind the config's own, so the agent never
+reads `/manifest` for it, and nothing was needed here.
+
 ## 5. SPARQL — how `kgfq` does and does not support it
 
 This is the section with the most to get wrong, so it is stated as positions.
@@ -1040,6 +1084,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq summary <ds>` | orient | `/summary`, Markdown to the terminal |
 | `kgfq schema <ds> [--class C \| --predicate P \| --projection …]` | drill | `/schema` |
 | `kgfq inventory <ds> [--out t]` | drill | the class × predicate table, ranked (C12) |
+| `kgfq verbalize <ds> [--config f] [--target t] [--iri …] [-n N] [--out t]` | verify | `/verbalize`: a config's plan and sampled texts (C13) |
 | `kgfq count <ds> <pattern> [--values file]` | verify | `/count`, batch form |
 | `kgfq sample <ds> <pattern> [-n]` | verify | `/sample` |
 | `kgfq resolve <text> [--datasets …] [--role label]` | situate | fan-out `/search` (C7) |

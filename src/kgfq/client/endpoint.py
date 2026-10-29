@@ -666,6 +666,40 @@ class Endpoint:
                 out[iri] = entry.get("label")
         return out
 
+    def verbalize(
+        self,
+        release: Release,
+        *,
+        config_text: str | None = None,
+        target: str | None = None,
+        iris: Sequence[str] = (),
+        n: int | None = None,
+        seed: int | None = None,
+        plan: bool = False,
+    ) -> Response:
+        """``GET /verbalize`` (C13): the config as YAML or JSON text, verbatim,
+        so the server owns its grammar and reports what it does not know in
+        ``unknown[]``; none sends the bundle's own. The mode is the server's
+        choice from what is named — IRIs, a target, or neither — and the
+        record's ``rows`` is the roots it rendered, so a truncated plan reads as
+        incomplete in a receipt."""
+        params: dict[str, Any] = {}
+        if config_text is not None:
+            params["config"] = config_text
+        if target:
+            params["target"] = target
+        if iris:
+            params["iri"] = ",".join(f"<{i}>" for i in iris)
+        if n is not None:
+            params["n"] = n
+        if seed is not None:
+            params["seed"] = seed
+        if plan:
+            params["plan"] = "true"
+        response = self.get(release.link("verbalize"), params)
+        response.record.rows = len((response.body or {}).get("records", []))
+        return response
+
     def search(
         self,
         release: Release,
