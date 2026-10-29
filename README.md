@@ -71,8 +71,8 @@ uv run ruff format src tests && uv run ruff check src tests && uv run ty check s
 ```
 
 `bench/registry_corpus.py` runs the okn-registry corpus through `kgfq sparql` against
-a live server and compares the result with `../kgf-sparql`'s own corpus run; its
-summaries are kept as `bench/registry-corpus-<date>.json`.
+a live server and compares the result with the kgf-sparql corpus run kept in
+`../kgf-sparql-bench`; its summaries are kept as `bench/registry-corpus-<date>.json`.
 
 ```
 Source/
