@@ -21,11 +21,13 @@ are per endpoint).
 from __future__ import annotations
 
 import json
+import os
 import re
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, TypeGuard
 from urllib.parse import urljoin
 
@@ -98,6 +100,83 @@ class Release:
             raise KeyError(
                 f"release {self.dataset}@{self.version} publishes no `{name}` link"
             ) from None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "origin": self.origin,
+            "dataset": self.dataset,
+            "version": self.version,
+            "content_digest": self.content_digest,
+            "dataset_iri": self.dataset_iri,
+            "links": dict(self.links),
+        }
+
+    @classmethod
+    def from_dict(cls, d: Mapping[str, Any]) -> Release:
+        return cls(
+            origin=d["origin"],
+            dataset=d["dataset"],
+            version=d["version"],
+            content_digest=d.get("content_digest", ""),
+            dataset_iri=d.get("dataset_iri"),
+            links=dict(d.get("links", {})),
+        )
+
+
+class DescriptorCache:
+    """The three documents every command read before doing anything — the
+    service descriptor (caps, budgets), a release's entry in its dataset
+    descriptor (links), and the manifest (prefixes, capabilities) — kept on
+    disk so a pinned graph costs no request to come back to (C2). Measured
+    before this existed: 2 to 3 requests per invocation, 65% of all traffic in a
+    session of ~40 commands.
+
+    A manifest is immutable by digest and cached unconditionally. The service
+    descriptor and a release's links are read from here only when the caller
+    says so — the pinned path — and written through on every fresh read, so an
+    unpinned resolve or ``--release`` still sees new datasets, releases and caps.
+    ``pins --clear`` empties it.
+    """
+
+    def __init__(self, root: Path) -> None:
+        self.root = root
+
+    def _origin_dir(self, origin: str) -> Path:
+        return self.root / re.sub(r"[^A-Za-z0-9]+", "_", origin).strip("_")
+
+    def _read(self, path: Path) -> dict[str, Any] | None:
+        try:
+            return json.loads(path.read_text())
+        except (OSError, ValueError):
+            return None
+
+    def _write(self, path: Path, value: Mapping[str, Any]) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(f".{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(value, sort_keys=True))
+        os.replace(tmp, path)
+
+    def service(self, origin: str) -> dict[str, Any] | None:
+        return self._read(self._origin_dir(origin) / "service.json")
+
+    def put_service(self, origin: str, body: Mapping[str, Any]) -> None:
+        self._write(self._origin_dir(origin) / "service.json", body)
+
+    def release(self, origin: str, dataset: str, version: str) -> Release | None:
+        d = self._read(self._origin_dir(origin) / f"{dataset}@{version}.json")
+        return Release.from_dict(d) if d else None
+
+    def put_release(self, release: Release) -> None:
+        self._write(
+            self._origin_dir(release.origin) / f"{release.dataset}@{release.version}.json",
+            release.as_dict(),
+        )
+
+    def manifest(self, digest: str) -> dict[str, Any] | None:
+        return self._read(self.root / "manifests" / f"{digest.replace(':', '_')}.json")
+
+    def put_manifest(self, digest: str, body: Mapping[str, Any]) -> None:
+        self._write(self.root / "manifests" / f"{digest.replace(':', '_')}.json", body)
 
 
 @dataclass(frozen=True, slots=True)
@@ -247,9 +326,11 @@ class Endpoint:
         skin: str = "kgfq",
         timeout: float = 60.0,
         client: httpx.Client | None = None,
+        cache: DescriptorCache | None = None,
     ) -> None:
         self.origin = origin.rstrip("/")
         self.skin = skin
+        self.cache = cache
         self._client = client or httpx.Client(
             timeout=timeout,
             headers={
@@ -395,9 +476,16 @@ class Endpoint:
 
     # -- descriptors --------------------------------------------------------
 
-    def service_descriptor(self) -> dict[str, Any]:
+    def service_descriptor(self, *, cached: bool = False) -> dict[str, Any]:
+        """The service descriptor; ``cached`` takes the workspace's copy when
+        there is one (the pinned path), a fresh read writes through."""
         if self._service is None:
-            self._service = self.get(self._base()).body
+            if cached and self.cache and (body := self.cache.service(self.origin)):
+                self._service = body
+            else:
+                self._service = self.get(self._base()).body
+                if self.cache:
+                    self.cache.put_service(self.origin, self._service)
         return self._service
 
     @property
@@ -421,15 +509,20 @@ class Endpoint:
             self._datasets[dataset] = self.get(path).body
         return self._datasets[dataset]
 
-    def release(self, dataset: str, version: str | None = None) -> Release:
+    def release(self, dataset: str, version: str | None = None, *, cached: bool = False) -> Release:
         """Resolve a dataset (and ``current`` when no version is given) to an
         immutable release, following the descriptor's links rather than
-        spelling routes (doc 03 §3.2)."""
+        spelling routes (doc 03 §3.2). A named version's links never change,
+        so ``cached`` may answer from the workspace without a request."""
+        if cached and version and self.cache:
+            known = self.cache.release(self.origin, dataset, version)
+            if known:
+                return known
         descriptor = self.dataset_descriptor(dataset)
         wanted = version or descriptor.get("current")
         for rel in descriptor.get("releases", []):
             if rel.get("version") == wanted:
-                return Release(
+                release = Release(
                     origin=self.origin,
                     dataset=descriptor.get("id", dataset),
                     version=rel["version"],
@@ -437,6 +530,9 @@ class Endpoint:
                     dataset_iri=descriptor.get("dataset_iri"),
                     links=dict(rel.get("links", {})),
                 )
+                if self.cache:
+                    self.cache.put_release(release)
+                return release
         raise KeyError(f"{self.origin}: dataset {dataset!r} has no release {wanted!r}")
 
     def link_url(self, release: Release, name: str) -> str:
@@ -444,9 +540,15 @@ class Endpoint:
         return self._url(release.link(name))
 
     def manifest(self, release: Release) -> dict[str, Any]:
+        """The manifest, immutable by digest: cached on disk once read."""
         key = release.content_digest or f"{release.dataset}@{release.version}"
         if key not in self._manifests:
-            self._manifests[key] = self.get(release.link("manifest")).body
+            body = self.cache.manifest(key) if self.cache and release.content_digest else None
+            if body is None:
+                body = self.get(release.link("manifest")).body
+                if self.cache and release.content_digest:
+                    self.cache.put_manifest(key, body)
+            self._manifests[key] = body
         return self._manifests[key]
 
     def prefixes(self, release: Release) -> dict[str, str]:

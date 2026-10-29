@@ -5,7 +5,9 @@ some origin. The server is a property of the graph; nothing here groups by it.
 - A dataset argument — an id, a dataset IRI, or ``id@origin`` — resolves to one
   graph at one release. The same id at two origins with different digests is
   an error naming both, never a silent pick; the same digest is one graph.
-- ``latest``/``current`` is resolved once and pinned in the workspace (D5).
+- ``latest``/``current`` is resolved once and pinned in the workspace (D5), and
+  a pinned graph comes back with no request: its service descriptor, release
+  links and manifest are cached beside the pin (``DescriptorCache``).
 - Capabilities are verified per release and cached (D7).
 """
 
@@ -16,7 +18,7 @@ from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 from ..workspace.store import Pin, Workspace
-from .endpoint import Endpoint, Release
+from .endpoint import DescriptorCache, Endpoint, Release
 from .errors import KgfError, KgfqError, TransportError
 
 
@@ -58,7 +60,11 @@ class Session:
     def endpoint(self, origin: str) -> Endpoint:
         origin = origin.rstrip("/")
         if origin not in self._endpoints:
-            self._endpoints[origin] = Endpoint(origin, skin=self.skin)
+            self._endpoints[origin] = Endpoint(
+                origin,
+                skin=self.skin,
+                cache=DescriptorCache(self.workspace.cache_dir("descriptors")),
+            )
         return self._endpoints[origin]
 
     def close(self) -> None:
@@ -106,8 +112,11 @@ class Session:
         if version is None and origin_hint is None and name in pins:
             pinned = pins[name]
             if pinned.origin in self.origins():
+                # the pinned path costs no request: the descriptors a command
+                # reads before its first operation come from the workspace
                 ep = self.endpoint(pinned.origin)
-                return ep, ep.release(pinned.dataset, pinned.version)
+                ep.service_descriptor(cached=True)
+                return ep, ep.release(pinned.dataset, pinned.version, cached=True)
         candidates: list[tuple[Endpoint, Release]] = []
         searched: list[str] = []
         for origin in [origin_hint] if origin_hint else self.origins():

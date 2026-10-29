@@ -426,6 +426,19 @@ with no link is not; `filters` and `keysets` are verified from the manifest's
 artifact list; verdicts are cached per digest under `.kgfq/cache/capabilities/`.
 The registry seed list is not read yet — endpoints are explicit until `kgs.yaml`
 carries a `kgf:` field.
+*Landed 2026-10-29 — the descriptor cache.* "A pinned dataset resolves with zero
+requests" was true of the resolve and false of what followed it: every command then
+read the service descriptor (caps), the dataset descriptor (the release's links) and
+the manifest (prefixes) afresh, 2 to 3 requests before its first operation. Measured
+in the verbalization-skill comparison (`notes/verbalize-skill.md`): 94 of a
+session's 135 requests and 110 of another's 171 were these, invisible to receipts
+because they happen outside the operation's trace. `DescriptorCache` keeps the three
+under `.kgfq/cache/descriptors/` — the manifest by digest unconditionally, the
+service descriptor and a release's links only on the pinned path, written through on
+every fresh read so an unpinned resolve or `--release` still sees new datasets,
+releases and caps. `pins --clear` empties it. Checked against a live server: a
+pinned `inventory`, `sample` and `verbalize` in sequence cost three requests, each
+its own operation.
 
 ### C3. Statistics
 

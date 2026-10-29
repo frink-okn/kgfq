@@ -187,6 +187,9 @@ def test_inventory_is_one_ranked_table_from_cached_reads(ws):
     assert table.column("predicate").to_pylist()[: len(rows)] == [r["predicate"] for r in rows]
     receipt, _ = run("receipt", "inv", workspace=ws)
     assert receipt["kind"] == "inventory" and receipt["intent"]["reads"] == handle["reads"]
+    text = io.StringIO()  # the trailing flag must not shadow receipt's positional
+    assert main(["--workspace", str(ws), "receipt", "inv", "--table"], out=text) == 0
+    assert text.getvalue().startswith("{")  # a receipt has no table form; JSON still
     assert receipt["completeness"]["complete"] is True and receipt["requests"] == []
     log, _ = run("log", workspace=ws)
     assert [s["command"] for s in log["steps"]][-2:] == ["inventory", "inventory"]

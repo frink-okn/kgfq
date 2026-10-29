@@ -77,7 +77,7 @@ class Cli:
         self.out = out or sys.stdout
         self.err = err or sys.stderr
         tty = hasattr(self.out, "isatty") and self.out.isatty()
-        self.json = bool(args.json) or (not tty and not getattr(args, "table", False))
+        self.json = bool(args.json) or (not tty and not getattr(args, "as_table", False))
         self.workspace = Workspace(args.workspace)
         self.session = Session(self.workspace, skin="kgfq", origins_override=args.endpoint or None)
 
@@ -915,6 +915,7 @@ class Cli:
     def pins(self) -> int:
         if self.args.clear:
             self.workspace.unpin()
+            self.workspace.clear_cache("descriptors")
         pins = self.workspace.pins()
         self.emit(
             {k: p.as_dict() for k, p in pins.items()},
@@ -1091,6 +1092,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="JSON output even on a TTY")
     p.add_argument(
         "--table",
+        dest="as_table",
         action="store_true",
         help="aligned text even when piped: the form a reader reads, not a parser",
     )
@@ -1254,9 +1256,13 @@ def build_parser() -> argparse.ArgumentParser:
     # --json and --table read naturally after the command too; SUPPRESS keeps a
     # subcommand's absent flag from overwriting the global one with False
     for command in sub.choices.values():
-        for flag in ("--json", "--table"):
+        for flag, dest in (("--json", "json"), ("--table", "as_table")):
             command.add_argument(
-                flag, action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS
+                flag,
+                dest=dest,
+                action="store_true",
+                default=argparse.SUPPRESS,
+                help=argparse.SUPPRESS,
             )
     return p
 
