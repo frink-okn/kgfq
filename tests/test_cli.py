@@ -161,6 +161,21 @@ def test_fetch_to_csv_path_with_receipt_beside_it(ws, tmp_path):
     assert handle["rows"] == 5 and handle["approximations"] and "R3" in handle["approximations"][0]
 
 
+def test_show_prints_a_filed_table(ws):
+    run("fetch", "genekg", "? ex:inPathway ?", "--out", "paths", workspace=ws)
+    payload, _ = run("show", "paths", workspace=ws)
+    assert payload["columns"][:3] == ["s", "p", "o"] and payload["total_rows"] == 7
+    assert payload["shown"] == 7 and all(
+        r["p"] == "http://example.org/inPathway" for r in payload["rows"]
+    )
+    payload, _ = run("show", "paths", "--limit", "2", workspace=ws)
+    assert payload["shown"] == 2 and payload["total_rows"] == 7
+    text = io.StringIO()
+    assert main(["--workspace", str(ws), "show", "paths", "--limit", "2", "--table"], out=text) == 0
+    assert text.getvalue().splitlines()[0].split()[:3] == ["s", "p", "o"]
+    assert text.getvalue().rstrip().endswith("(2 of 7 rows; --limit 0 for all)")
+
+
 def test_inventory_is_one_ranked_table_from_cached_reads(ws):
     """C12: the three reads once, the table ranked, absolute IRIs, and on
     --out a Parquet file with its receipt and a log step."""

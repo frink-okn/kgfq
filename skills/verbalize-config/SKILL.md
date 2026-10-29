@@ -89,7 +89,7 @@ an allowlist — a denylist silently lets new noise back in.
 | `kgfq inventory <ds> --out inventory` | the same table filed with a receipt, so the report can cite its rows |
 | `kgfq sample <ds> '? rdf:type <class IRI>' -n 5 --seed 1 --table` | seeded members of a class; the same seed draws the same members |
 | `kgfq verbalize <ds> --config config.yaml -n 3 --seed 1 --table` | **the main tool.** The plan: per target `members`, `sampled`, length statistics, `truncated`, `limited`; then every sampled root's text. `--target <name>` samples one target; `--target <name> --iri <IRI>` renders exactly that root (repeat `--iri`) — the node as the embedding sees it. `--out plan` files the per-target figures. |
-| `kgfq fetch <ds> '<node IRI> ? ?' --out node` | a node's raw outgoing edges, filed as a table (`s, p, o, …`) with a receipt, when you need the IRIs the config would drop |
+| `kgfq fetch <ds> '<node IRI> ? ?' --out node`, then `kgfq show node --table` | a node's raw outgoing edges, filed as a table (`s, p, o, …`) with a receipt and printed back, when you need the IRIs the config would drop |
 | `kgfq log --table`, `kgfq receipt <table>` | what you ran, and what a filed table came from |
 
 The root cap is a server rule over the whole plan — `targets × n` may not exceed

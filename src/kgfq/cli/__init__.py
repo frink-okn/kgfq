@@ -898,6 +898,32 @@ class Cli:
         self.emit(self.workspace.read_receipt(self.args.table))
         return 0
 
+    def show(self) -> int:
+        """A filed table's rows, printed back — what `inventory` without `--out`
+        does for its own table, for any table in the workspace. A local read:
+        no request, no log step. The default limit keeps a million-row fetch
+        from scrolling past; `--limit 0` is all of it."""
+        a = self.args
+        table = self.workspace.read_table(a.table)
+        total = table.num_rows
+        if a.limit:
+            table = table.slice(0, a.limit)
+        rows = table.to_pylist()
+        self.emit(
+            {
+                "table": a.table,
+                "columns": table.column_names,
+                "rows": rows,
+                "total_rows": total,
+                "shown": len(rows),
+            },
+            table=[[r[c] for c in table.column_names] for r in rows],
+            header=table.column_names,
+        )
+        if not self.json and len(rows) < total:
+            self.out.write(f"({len(rows)} of {total} rows; --limit 0 for all)\n")
+        return 0
+
     def log(self) -> int:
         records = self.workspace.read_log()
         if self.args.last:
@@ -1249,6 +1275,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("receipt", help="the receipt attached to a table")
     r.add_argument("table")
+    sh = sub.add_parser("show", help="print a filed table's rows")
+    sh.add_argument("table")
+    sh.add_argument("--limit", type=int, default=100, help="rows to print (default 100; 0 for all)")
     lg = sub.add_parser("log", help="the session log")
     lg.add_argument("--last", type=int)
     pi = sub.add_parser("pins", help="the pinned releases")

@@ -1113,6 +1113,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq sparql <file.rq> --dataset … [--endpoint url]` | complete | lint, then launch `kgf-sparql` (§5.2); refuses politely when it is not installed |
 | `kgfq raw <method> <path> [--body]` | debug | one unplanned request, output marked `unplanned` |
 | `kgfq receipt <table>` | audit | the receipt attached to a table |
+| `kgfq show <table> [--limit N]` | audit | a filed table's rows, printed back; a local read |
 | `kgfq replay [--from N]` | audit | re-execute the log's stored plans and compare hashes (C10) |
 | `kgfq cite <table> --row N` | audit | the source triples behind a row (C11) |
 | `kgfq report` | audit | the provenance document, generated from the log (C11) |
@@ -1133,7 +1134,11 @@ budget that ended an aborted run, the lint codes and the engine receipt's path.
 the aligned text form when stdout is a pipe — an agent is never on a TTY, and the
 JSON form of sockg's inventory is 141,681 bytes against 103,083 aligned (the width
 is the IRIs; the three smaller local graphs are 11–25 KB). The verbalization skill
-asks for it on every command.
+asks for it on every command. `show <table>` landed the same day, from the
+comparison's second-most-cited friction: `fetch` files its rows and prints a
+receipt, and nothing printed the file back, so two agents exported CSV and
+parsed it by hand. It is a reader, not the SQL surface (C8), and does not grow
+into one.
 
 Conventions: JSON on stdout when not a TTY, tables when it is or `--table` asks; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the
