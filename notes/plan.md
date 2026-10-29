@@ -575,8 +575,8 @@ neither language nor datatype, however the server spelled it (RDF 1.1: one term,
 encoding). `term_columns` is the one encoder; `sparql.results` converts rdflib terms to
 it rather than keeping a second copy of the rule. A blank node keeps its `_:` in the
 value, so `s`, which has no kind column, stays unambiguous. `cite` and `join` read the
-kind rather than infer it, and a browser client (the kgf-web sketch in the session of
-2026-09-24) stores its tables the same way. Tables written before this have no `o_kind`
+kind rather than infer it, and a browser client, `../kgf-explorer`, stores its tables the
+same way. Tables written before this have no `o_kind`
 and hash differently.
 
 *Decided 2026-09-24 — what `complete` means.* Schema `kgfq.receipt/3`. A table is
@@ -622,7 +622,7 @@ column — an input no row answers found nothing — so it is the same whichever
 chose, pushed bindings or a whole fetch filtered here. It is not an approximation: the
 table is exact for the values that matched. It is the number a reader needs before
 trusting the next join, and the receipt is where a silent loss becomes a finding. Found
-in the kgf-web sketch: ruralkg writes 899 ZIPs without their leading zeros, space-padded
+in `../kgf-explorer`: ruralkg writes 899 ZIPs without their leading zeros, space-padded
 (`"1002 "` for 01002), so binding its postal codes to kwg-places' `hasGEOID` matched
 4,887 of 5,420, and the 533 lost ones, which dropped New England, New Jersey and Puerto
 Rico from an answer, showed only once a sample was printed; after repair, the 64 still

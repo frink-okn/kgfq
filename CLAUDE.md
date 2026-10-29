@@ -61,7 +61,7 @@ uv run pytest
   was decided while building it. When a decision changes, change the D-item and
   say why; decisions are surfaced, not quietly replaced.
 - Questions for the design docs (`../kgf/docs`) go in plan §11. Edits to `../kgf`
-  and any commit happen only when Jim asks.
+  and any commit happen only when asked.
 - The intent representation (C4) is open; `notes/intent.md` is the proposal.
 
 ## Style

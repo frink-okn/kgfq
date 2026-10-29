@@ -12,3 +12,5 @@ dist/
 handoff/
 # corpus-run workspaces are regenerated; their result summaries are kept
 bench/runs/
+# OKN Fabric demo candidates and their captured runs stay local
+/okn-demo/
