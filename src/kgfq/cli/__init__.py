@@ -50,6 +50,18 @@ from ..workspace.log import Step
 from ..workspace.receipts import fetch_receipt
 from ..workspace.store import Workspace, WorkspaceError
 
+INVENTORY_COLUMNS = [
+    "class",
+    "predicate",
+    "entities",
+    "distinct_subjects",
+    "triples",
+    "distinct_objects",
+    "coverage",
+    "fanout",
+    "object_classes",
+]
+
 DEFAULT_PREFIXES = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -188,13 +200,15 @@ class Cli:
             params["limit"] = a.limit
         step = self.step("schema", dataset=a.dataset, params=params, all=a.all)
         step.pin(_pin(ep, rel))
+        unfiltered = not any(k in params for k in ("class", "predicate", "datatype", "view"))
         inventory = (
             a.all
+            and unfiltered
             and params.get("children") in ("properties", "classes")
-            and not any(
-                k in params for k in ("class", "predicate", "datatype", "view", "projection")
-            )
+            and "projection" not in params
         )
+        projection = a.all and unfiltered and "projection" in params and "children" not in params
+        body: dict[str, Any]
         with ep.trace() as t:
             if inventory:
                 # the cached inventory (C3): the queryable view, whose numbers
@@ -205,6 +219,20 @@ class Cli:
                 body["items"] = stats.items(params["children"])
                 body["complete"] = True
                 body["next"] = None
+            elif projection:
+                # the cached projection, the same view and the same once-per-release;
+                # the envelope is assembled here, not a response
+                stats = self.stats(ep, rel)
+                body = {
+                    "dataset": rel.dataset,
+                    "version": rel.version,
+                    "view": "queryable",
+                    "projection": params["projection"],
+                    "filters": {},
+                    "items": stats.projection(params["projection"]),
+                    "complete": True,
+                    "next": None,
+                }
             elif a.all and ("children" in params or "projection" in params):
                 items = list(ep.schema_items(rel, params))
                 page = ep.schema_page(rel, {k: v for k, v in params.items() if k != "cursor"})
@@ -228,6 +256,100 @@ class Cli:
             body,
             table=rows or [["node", json.dumps(body.get("node")), ""]],
             header=["kind", "term", "counts"],
+        )
+        return 0
+
+    def inventory(self) -> int:
+        """C12: the class x predicate inventory as one table — which predicates
+        describe a class, how many of its entities carry each, how many values
+        each gets — ranked, with absolute IRIs, and filed with a receipt on
+        ``--out``. Three reads from the C3 cache, so a second run costs nothing."""
+        a = self.args
+        ep, rel = self.resolve(a.dataset)
+        step = self.step("inventory", dataset=a.dataset, out=a.out)
+        step.pin(_pin(ep, rel))
+        stats = self.stats(ep, rel)
+        cached = set(stats.cached_names())
+        reads = {
+            name: "cache" if name in cached else "server"
+            for name in ("classes", "class-properties", "class-relations")
+        }
+        with ep.trace() as t:
+            rows = stats.inventory()
+            receipt = fetch_receipt(
+                step=step.step,
+                kind="inventory",
+                release=rel,
+                intent={"operation": "inventory", "view": "queryable", "reads": reads},
+                plan=None,
+                trace=t,
+            )
+        columns = INVENTORY_COLUMNS
+        records: list[dict[str, Any]] = [
+            {
+                "class": r.class_iri,
+                "predicate": r.predicate,
+                "entities": r.entities,
+                "distinct_subjects": r.distinct_subjects,
+                "triples": r.triples,
+                "distinct_objects": r.distinct_objects,
+                "coverage": r.coverage,
+                "fanout": r.fanout,
+                "object_classes": " ".join(r.object_classes),
+            }
+            for r in rows
+        ]
+        table = pa.table({c: [rec[c] for rec in records] for c in columns})
+        step.receipt({k: receipt[k] for k in ("totals", "completeness", "grade")})
+        if a.out:
+            info = write_output(self.workspace, a.out, table, receipt)
+            step.output(
+                table=info["table"],
+                path=info["path"],
+                rows=table.num_rows,
+                content_hash=info["content_hash"],
+            )
+            step.finish()
+            handle = {
+                "table": info["table"],
+                "path": info["path"],
+                "rows": table.num_rows,
+                "columns": columns,
+                "grade": receipt["grade"],
+                "requests": receipt["totals"]["requests"],
+                "reads": reads,
+                "step": step.step,
+                "content_hash": info["content_hash"],
+            }
+            self.emit(handle, table=[[k, v] for k, v in handle.items()], header=["field", "value"])
+            return 0
+        step.output(rows=table.num_rows)
+        step.finish()
+        self.emit(
+            {
+                "dataset": rel.dataset,
+                "version": rel.version,
+                "content_digest": rel.content_digest,
+                "view": "queryable",
+                "reads": reads,
+                "columns": columns,
+                "rows": records,
+            },
+            table=[
+                [
+                    rec["class"],
+                    rec["predicate"],
+                    rec["entities"],
+                    rec["distinct_subjects"],
+                    rec["triples"],
+                    rec["distinct_objects"],
+                    _ratio(rec["coverage"], 3),
+                    _ratio(rec["fanout"], 1),
+                    rec["object_classes"],
+                ]
+                for rec in records
+            ],
+            header=columns,
         )
         return 0
 
@@ -706,6 +828,10 @@ def _pin(ep: Endpoint, rel: Release) -> dict[str, Any]:
     }
 
 
+def _ratio(v: float | None, places: int) -> str:
+    return "" if v is None else f"{v:.{places}f}"
+
+
 def _cell(v: Any) -> str:
     if v is None:
         return ""
@@ -885,6 +1011,13 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--view", choices=["design", "queryable"])
     sc.add_argument("--limit", type=int)
     sc.add_argument("--all", action="store_true", help="follow cursors to the end")
+
+    inv = sub.add_parser(
+        "inventory",
+        help="the class x predicate inventory, ranked: which predicates describe a class",
+    )
+    inv.add_argument("dataset")
+    inv.add_argument("--out", help="table name, or a .parquet/.csv/.json path")
 
     for name, help_ in (
         ("count", "count a pattern, or each row of --values"),

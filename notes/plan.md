@@ -450,6 +450,11 @@ ordering before any count; anything else goes to the server once. Batch counts
 send only the rows the cache has not seen. The planner reports the source of
 its count in the plan's evidence (`inventory:predicate`, `cache`, `server`), and
 `kgfq schema --all --children properties|classes` reads the cached inventory.
+*Landed 2026-10-29:* `kgfq schema --all --projection …` reads the same cache, with
+the same queryable-view substitution and an envelope assembled from the cache rather
+than a response; `ClassProperty` carries the server's `distinct_subjects` and
+`distinct_objects`, which it had been dropping (C12 needs both); a projection's cache
+key carries its view, so two views cannot share a file.
 
 ### C4. The strategy function
 
@@ -627,7 +632,9 @@ in `../kgf-explorer`: ruralkg writes 899 ZIPs without their leading zeros, space
 4,887 of 5,420, and the 533 lost ones, which dropped New England, New Jersey and Puerto
 Rico from an answer, showed only once a sample was printed; after repair, the 64 still
 unmatched were well-formed USPS ZIPs with no Census ZIP area, a different loss the same
-report caught. Schema `kgfq.receipt/3`. The handle `fetch` prints and returns (§6, §7)
+report caught. Schema `kgfq.receipt/3`; `kgfq.receipt/4` on 2026-10-29 adds the
+kinds `inventory` (C12) and `verbalize` (C13) to the enum and changes nothing else.
+The handle `fetch` prints and returns (§6, §7)
 carries `unmatched` and the sample, not only the sidecar: that is where it changes what
 an agent does next. Waits for the paged-completeness fix to `fetch_receipt` to land.
 
@@ -742,6 +749,49 @@ it — and the tool claims only what it proves: every number came from these tri
 through this script.
 
 *Verified by:* the trust corpus (§8).
+
+### C12. The inventory
+
+The class × predicate inventory as one table: for every (class, predicate) the
+class-properties projection publishes, the class's entity count beside the pair's
+`triples`, `distinct_subjects` and `distinct_objects`, the two ratios an agent judges
+a predicate by — **coverage** (`distinct_subjects / entities`: how many of the class
+carry it at all) and **fanout** (`triples / distinct_subjects`: values per subject
+that has one) — and the object classes class-relations records for the pair, empty
+when the values are literals or untyped IRIs (doc 03 §3.4.10). Ranked the way it is
+read: biggest classes first, and within a class the predicates most of its entities
+carry. Three reads, all C3's and all cached, so a second call in a release costs no
+request. The reader is not the planner: it is an agent deciding which predicates
+describe a class — for a verbalization config first (`notes/verbalize-skill.md`),
+for any schema question of the "what is a Gene made of" kind afterwards.
+
+Measured before building: sockg's complete inventory (27 M triples) is 90 classes,
+429 class-properties rows and 282 class-relations rows from 9 requests; dreamkg's is
+16, 116 and 157 from 6. That size is why this is a library join and a command, and
+not `--out` on `schema` plus C8: a join of ~800 rows wants no engine. `--out` files
+it as a table with a receipt graded `bundle` (D17's three questions answer cleanly:
+re-fetchable by digest, every row pointable at a schema page of an immutable
+release, origin the protocol's) whose `requests` carry the request ids the reads
+made and whose `intent.reads` says which of the three came from the cache.
+
+Absolute IRIs throughout, never CURIEs: what reads this table pastes IRIs into a
+server config, and `/verbalize` does not expand prefixes — a CURIE there is an
+`unknown[]` entry and a target with zero members (probed 2026-10-29 against a
+fixture bundle).
+
+*Verified by:* against a fixture server, `inventory` makes three requests the first
+time and none the second; the row for `Gene inPathway` carries entities 7,
+`distinct_subjects` 7, coverage 1.0, fanout 1.0 and object class `Pathway`; a literal
+predicate's object classes are empty; `--out` writes the Parquet with its receipt and
+a log step (`tests/test_statistics.py`, `tests/test_cli.py`).
+
+*Landed 2026-10-29* as `Statistics.inventory` (`InventoryRow`) and `kgfq inventory
+<dataset> [--out name]`, receipt kind `inventory` (`kgfq.receipt/4`). No `--class`
+or `--predicate` filter: the whole release's table is the unit, and ~800 rows need
+none. The JSON surface of sockg's inventory is 141,684 bytes with `indent=1`; the
+same rows as a tab-separated table with local names were 20,154 — the output
+format, not the table, is where the remaining size is, and `--out` plus any reader
+of Parquet is the answer rather than a second format.
 
 ## 5. SPARQL — how `kgfq` does and does not support it
 
@@ -989,6 +1039,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq datasets [--iri X \| --class C \| --text Q]` | find | registry + service descriptors (C2) |
 | `kgfq summary <ds>` | orient | `/summary`, Markdown to the terminal |
 | `kgfq schema <ds> [--class C \| --predicate P \| --projection …]` | drill | `/schema` |
+| `kgfq inventory <ds> [--out t]` | drill | the class × predicate table, ranked (C12) |
 | `kgfq count <ds> <pattern> [--values file]` | verify | `/count`, batch form |
 | `kgfq sample <ds> <pattern> [-n]` | verify | `/sample` |
 | `kgfq resolve <text> [--datasets …] [--role label]` | situate | fan-out `/search` (C7) |

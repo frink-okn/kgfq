@@ -1,13 +1,13 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/3",
+  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/4",
   "title": "kgfq receipt (C6, D5, D17)",
   "description": "Attached to every table as a sidecar and in the Parquet footer under `kgfq.receipt`, and written as a sidecar alone for a step that produced no table (a SPARQL run aborted at a budget). What makes an approximate answer a finding rather than a bug. Version 2 adds kind `sparql`: multiple graded sources, the query as run, the lint and normalization record, the engine's outcome and budget, requests folded by shape, and a pointer to the engine's own receipt in place of a copy of its request list. Version 3 reads `completeness` from what the client did with each response that carried the table's rows, not from the server's per-page flag: a page limit or a budget interruption (`time_budget`, `response_bytes`) whose cursor was followed no longer makes a table incomplete, and a read stopped with rows left (`max_rows`) always does. It adds `completeness.incomplete_because` and each request's `continued` and `stopped`.",
   "type": "object",
   "required": ["schema", "kind", "grade", "created"],
   "properties": {
-    "schema": {"const": "kgfq.receipt/3"},
-    "kind": {"enum": ["fetch", "hydrate", "labels", "derived", "import", "resolve", "sparql"]},
+    "schema": {"const": "kgfq.receipt/4"},
+    "kind": {"enum": ["fetch", "hydrate", "labels", "derived", "import", "resolve", "sparql", "inventory", "verbalize"]},
     "step": {"type": ["integer", "null"], "description": "The log step that produced the table."},
     "grade": {"enum": ["bundle", "sparql", "external", "asserted"], "description": "D17 source grade; a derived table takes the minimum over its inputs, a `sparql` run the minimum over its sources."},
     "source": {

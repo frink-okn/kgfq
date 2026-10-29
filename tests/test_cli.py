@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 
+import pyarrow.parquet as pq
 import pytest
 
 from kgfq.cli import _tokenize, main
@@ -104,7 +105,7 @@ def test_fetch_max_rows_is_an_approximation_only_when_rows_remained(ws):
     assert handle["rows"] == 5 and handle["complete"] is False
     assert "--max-rows 5" in handle["approximations"][0]
     receipt, _ = run("receipt", "few", workspace=ws)
-    assert receipt["schema"] == "kgfq.receipt/3"
+    assert receipt["schema"] == "kgfq.receipt/4"
     assert receipt["completeness"]["incomplete_because"] == ["max_rows"]
     handle, _ = run(
         "fetch", "chemkg", "?c ex:affects ?g", "--max-rows", "24", "--out", "all", workspace=ws
@@ -146,6 +147,51 @@ def test_fetch_to_csv_path_with_receipt_beside_it(ws, tmp_path):
         "fetch", "chemkg", "? rdfs:label ?", "--out", "few", "--max-rows", "5", workspace=ws
     )
     assert handle["rows"] == 5 and handle["approximations"] and "R3" in handle["approximations"][0]
+
+
+def test_inventory_is_one_ranked_table_from_cached_reads(ws):
+    """C12: the three reads once, the table ranked, absolute IRIs, and on
+    --out a Parquet file with its receipt and a log step."""
+    payload, _ = run("inventory", "genekg", workspace=ws)
+    assert payload["reads"] == {
+        "classes": "server",
+        "class-properties": "server",
+        "class-relations": "server",
+    }
+    assert payload["view"] == "queryable" and payload["columns"][:2] == ["class", "predicate"]
+    rows = payload["rows"]
+    assert [r["entities"] for r in rows] == sorted((r["entities"] for r in rows), reverse=True)
+    pathway = next(r for r in rows if r["predicate"] == "http://example.org/inPathway")
+    assert pathway["class"] == "http://example.org/Gene"
+    assert (pathway["entities"], pathway["distinct_subjects"], pathway["triples"]) == (7, 7, 7)
+    assert (pathway["coverage"], pathway["fanout"]) == (1.0, 1.0)
+    assert pathway["object_classes"] == "http://example.org/Pathway"
+
+    handle, _ = run("inventory", "genekg", "--out", "inv", workspace=ws)
+    assert handle["requests"] == 0 and set(handle["reads"].values()) == {"cache"}
+    assert handle["rows"] == len(rows) and handle["grade"] == "bundle"
+    table = pq.read_table(ws / "tables" / "inv.parquet")
+    assert table.column_names == payload["columns"]
+    assert table.column("predicate").to_pylist()[: len(rows)] == [r["predicate"] for r in rows]
+    receipt, _ = run("receipt", "inv", workspace=ws)
+    assert receipt["kind"] == "inventory" and receipt["intent"]["reads"] == handle["reads"]
+    assert receipt["completeness"]["complete"] is True and receipt["requests"] == []
+    log, _ = run("log", workspace=ws)
+    assert [s["command"] for s in log["steps"]][-2:] == ["inventory", "inventory"]
+    assert log["steps"][-1]["output"]["table"] == "inv"
+
+    # the same projection through `schema --all` now reads the cache too
+    schema, _ = run("schema", "genekg", "--projection", "class-relations", "--all", workspace=ws)
+    assert schema["view"] == "queryable" and schema["complete"] is True
+    assert {i["predicate"]["value"] for i in schema["items"]} == {"http://example.org/inPathway"}
+    assert log_requests(ws) == 0
+
+
+def log_requests(ws) -> int:
+    """Requests the last log step made."""
+    log, _ = run("log", "--last", "1", workspace=ws)
+    receipt = log["steps"][-1].get("receipt") or {}
+    return receipt.get("requests", receipt.get("totals", {}).get("requests", 0))
 
 
 def test_errors_are_the_servers_problem_document(ws, tmp_path):

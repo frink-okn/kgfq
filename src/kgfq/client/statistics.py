@@ -10,6 +10,10 @@ Numbers come from the ``queryable`` view: doc 03 §3.4.10 makes its counts equal
 ``/count``'s, where the ``design`` view is closure-uncontaminated and may not.
 So an exact inventory number answers a count with zero requests, which is what
 makes rule R1 "nearly free" (implications §3.1).
+
+:meth:`Statistics.inventory` serves a second reader: an agent deciding which
+predicates describe a class (C12). It is the same three cached reads joined, so
+the table it ranks costs the planner's own requests and no others.
 """
 
 from __future__ import annotations
@@ -46,9 +50,15 @@ class ClassStats:
 
 @dataclass(frozen=True, slots=True)
 class ClassProperty:
+    """One row of the class-properties projection. ``distinct_subjects`` and
+    ``distinct_objects`` are the server's, not derived: coverage and fanout are
+    judged by them, so dropping them would make this type useless to C12."""
+
     class_iri: str
     predicate: str
     triples: int
+    distinct_subjects: int | None
+    distinct_objects: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +67,37 @@ class ClassRelation:
     predicate: str
     object_class: str
     triples: int
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryRow:
+    """One (class, predicate) of the inventory (C12): the class-properties
+    projection with its class's entity count beside it, and the object classes
+    the class-relations projection gives the same pair. IRIs are absolute,
+    because what reads this table pastes them into a server config that does
+    not expand CURIEs."""
+
+    class_iri: str
+    predicate: str
+    entities: int
+    triples: int
+    distinct_subjects: int | None
+    distinct_objects: int | None
+    object_classes: tuple[str, ...]
+
+    @property
+    def coverage(self) -> float | None:
+        """The share of the class's entities that carry the predicate at all."""
+        if not self.entities or self.distinct_subjects is None:
+            return None
+        return self.distinct_subjects / self.entities
+
+    @property
+    def fanout(self) -> float | None:
+        """Values per subject that has one."""
+        if not self.distinct_subjects:
+            return None
+        return self.triples / self.distinct_subjects
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,6 +113,10 @@ class Estimate:
 def canonical_pattern(pattern: Pattern) -> str:
     """The cache key of a pattern: its bound positions in §3.3 syntax, sorted."""
     return json.dumps(pattern.as_params(), sort_keys=True, separators=(",", ":"))
+
+
+def _count(value: Any) -> int | None:
+    return int(value) if isinstance(value, int) else None
 
 
 def _iri(obj: Any) -> str:
@@ -160,11 +205,13 @@ class Statistics:
             )
         return out
 
-    def _projection(
-        self, name: str, class_iri: str | None, predicate: str | None
+    def projection(
+        self, name: str, class_iri: str | None = None, predicate: str | None = None
     ) -> list[dict[str, Any]]:
+        """Every item of a ``/schema`` projection, in the server's own item shape,
+        cached under the release digest like the inventories."""
         params: dict[str, Any] = {"projection": name, "view": self.view}
-        key = name
+        key = name if self.view == "queryable" else f"{name}.{self.view}"
         if class_iri:
             params["class"] = f"<{class_iri}>"
         if predicate:
@@ -177,15 +224,21 @@ class Statistics:
         self, class_iri: str | None = None, predicate: str | None = None
     ) -> list[ClassProperty]:
         return [
-            ClassProperty(_iri(i.get("class")), _iri(i.get("predicate")), int(i.get("triples", 0)))
-            for i in self._projection("class-properties", class_iri, predicate)
+            ClassProperty(
+                _iri(i.get("class")),
+                _iri(i.get("predicate")),
+                int(i.get("triples", 0)),
+                _count(i.get("distinct_subjects")),
+                _count(i.get("distinct_objects")),
+            )
+            for i in self.projection("class-properties", class_iri, predicate)
         ]
 
     def class_relations(
         self, class_iri: str | None = None, predicate: str | None = None
     ) -> list[ClassRelation]:
         out = []
-        for i in self._projection("class-relations", class_iri, predicate):
+        for i in self.projection("class-relations", class_iri, predicate):
             subject = i.get("subject_class") or i.get("subject-class") or i.get("class")
             obj = i.get("object_class") or i.get("object-class")
             out.append(
@@ -194,6 +247,44 @@ class Statistics:
                 )
             )
         return out
+
+    def inventory(self) -> list[InventoryRow]:
+        """The class x predicate inventory (C12): one row per (class, predicate),
+        the class's entity count beside the pair's counts, and the object classes
+        class-relations records for it — empty when the values are literals or
+        untyped IRIs (doc 03 §3.4.10).
+
+        Three cached reads, so the second call in a release costs nothing. Rows
+        are ranked the way the predicate is judged: the biggest classes first,
+        and within a class the predicates most of its entities carry.
+        """
+        classes = self.classes()
+        relations: dict[tuple[str, str], list[tuple[int, str]]] = {}
+        for r in self.class_relations():
+            relations.setdefault((r.subject_class, r.predicate), []).append(
+                (r.triples, r.object_class)
+            )
+        rows = [
+            InventoryRow(
+                class_iri=c.class_iri,
+                predicate=c.predicate,
+                entities=classes[c.class_iri].entities if c.class_iri in classes else 0,
+                triples=c.triples,
+                distinct_subjects=c.distinct_subjects,
+                distinct_objects=c.distinct_objects,
+                object_classes=tuple(
+                    iri
+                    for _, iri in sorted(
+                        relations.get((c.class_iri, c.predicate), []), key=lambda t: (-t[0], t[1])
+                    )
+                ),
+            )
+            for c in self.class_properties()
+        ]
+        rows.sort(
+            key=lambda r: (-r.entities, r.class_iri, -(r.coverage or 0.0), -r.triples, r.predicate)
+        )
+        return rows
 
     # -- estimates without a request ----------------------------------------
 
