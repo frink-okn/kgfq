@@ -29,6 +29,18 @@ def ws(tmp_path, chem, genes):
     return tmp_path
 
 
+def test_table_forces_text_when_piped(ws):
+    out = io.StringIO()
+    assert main(["--workspace", str(ws), "--table", "inventory", "genekg"], out=out) == 0
+    lines = out.getvalue().splitlines()
+    assert lines[0].split()[:3] == ["class", "predicate", "entities"]
+    assert lines[1].split()[:2] == ["http://example.org/Gene", "http://example.org/inPathway"]
+    assert not out.getvalue().lstrip().startswith("{")
+    trailing = io.StringIO()
+    assert main(["--workspace", str(ws), "inventory", "genekg", "--table"], out=trailing) == 0
+    assert trailing.getvalue() == out.getvalue()
+
+
 def test_tokenize_keeps_literals_and_iris_whole():
     assert _tokenize('?s rdfs:label "Diabetes mellitus"@en') == [
         "?s",

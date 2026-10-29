@@ -1,6 +1,7 @@
 """``kgfq`` — the intent surface as shell commands (plan §6).
 
-JSON on stdout when it is not a TTY, aligned text when it is. Every error from
+JSON on stdout when it is not a TTY, aligned text when it is or ``--table``
+asks (an agent is never on a TTY, and reads text). Every error from
 a server is its problem document, verbatim. Every command that touches the
 network or writes a table appends one record to the workspace log (C9).
 """
@@ -75,7 +76,8 @@ class Cli:
         self.args = args
         self.out = out or sys.stdout
         self.err = err or sys.stderr
-        self.json = bool(args.json) or not (hasattr(self.out, "isatty") and self.out.isatty())
+        tty = hasattr(self.out, "isatty") and self.out.isatty()
+        self.json = bool(args.json) or (not tty and not getattr(args, "table", False))
         self.workspace = Workspace(args.workspace)
         self.session = Session(self.workspace, skin="kgfq", origins_override=args.endpoint or None)
 
@@ -1088,6 +1090,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--json", action="store_true", help="JSON output even on a TTY")
     p.add_argument(
+        "--table",
+        action="store_true",
+        help="aligned text even when piped: the form a reader reads, not a parser",
+    )
+    p.add_argument(
         "--endpoint",
         action="append",
         help="use this origin instead of the workspace's endpoints (repeatable)",
@@ -1244,6 +1251,13 @@ def build_parser() -> argparse.ArgumentParser:
     lg.add_argument("--last", type=int)
     pi = sub.add_parser("pins", help="the pinned releases")
     pi.add_argument("--clear", action="store_true")
+    # --json and --table read naturally after the command too; SUPPRESS keeps a
+    # subcommand's absent flag from overwriting the global one with False
+    for command in sub.choices.values():
+        for flag in ("--json", "--table"):
+            command.add_argument(
+                flag, action="store_true", default=argparse.SUPPRESS, help=argparse.SUPPRESS
+            )
     return p
 
 

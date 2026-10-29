@@ -37,7 +37,7 @@ So one repository, one library, several skins:
 | `kgfq.cli`, console script `kgfq` | the CLI — the intent surface as shell commands, `explain`, `lint`, a marked raw mode, and a thin `sparql` wrapper |
 | `kgfq.mcp`, console script `kgfq-mcp` | the MCP server — the intent tools over the library and a sandboxed local DuckDB |
 | `kgfq.lint`, also `kgfq lint` | the SPARQL linter (`KGFQ001`–`KGFQ012`), usable standalone and by registry CI |
-| `skills/` | the agent skill: the loop, the count-before-fetch habit, reading cards |
+| `skills/` | the agent skills: `kgf-integration/` (the loop, the count-before-fetch habit, reading cards) and `verbalize-config/` (designing a verbalization config from the inventory, C12–C13) |
 | `bench/` | the evaluation harness, a first-class deliverable (§8) |
 
 One Python distribution, `kgfq`, because the strategy function must exist once and
@@ -340,6 +340,7 @@ kgfq/
     mcp/                  the MCP server
     cli/                  the CLI
   skills/kgf-integration/ the agent skill
+  skills/verbalize-config/ the verbalization-config skill (landed 2026-10-29; its draft is notes/verbalize-skill.md)
   bench/                  harness, corpora pins, frozen baselines (registry_corpus.py and its runs)
   docs/                   plan, receipt, intent and log-record schemas, author guide
   notes/                  this file
@@ -1115,7 +1116,13 @@ with a `?var` header; `--max-rows` records an R3 approximation in the receipt;
 [--timeout S] [--normalize] [--force]`; the handle names the contract, the table, the
 budget that ended an aborted run, the lint codes and the engine receipt's path.
 
-Conventions: JSON on stdout when not a TTY, tables when it is; `--out` writes files;
+*Landed 2026-10-29*: `inventory` (C12), `verbalize` (C13), and `--table`, which keeps
+the aligned text form when stdout is a pipe — an agent is never on a TTY, and the
+JSON form of sockg's inventory is 141,681 bytes against 103,083 aligned (the width
+is the IRIs; the three smaller local graphs are 11–25 KB). The verbalization skill
+asks for it on every command.
+
+Conventions: JSON on stdout when not a TTY, tables when it is or `--table` asks; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the
 release-scoped statistics cache and the DuckDB scratch file, `tables/` the evidence,
 and `kgfq.log.jsonl` the script — so a multi-step task never straddles a release, a
