@@ -8,7 +8,7 @@ from typing import Any
 
 from ..client.endpoint import Release, RequestRecord, Trace
 
-RECEIPT_SCHEMA = "kgfq.receipt/3"
+RECEIPT_SCHEMA = "kgfq.receipt/4"
 
 # The truncations a followed cursor repairs: doc 03 §3.6 promises every cursor
 # resumes with no loss and no duplication, budget interruptions included. Only

@@ -5,7 +5,12 @@ from collections.abc import Iterator
 import pytest
 
 from kgfq.client.endpoint import Endpoint, Pattern
-from kgfq.client.statistics import ClassRelation, Statistics, canonical_pattern
+from kgfq.client.statistics import (
+    ClassProperty,
+    ClassRelation,
+    Statistics,
+    canonical_pattern,
+)
 from kgfq.client.terms import Iri, Var
 from kgfq.plan import plan_fetch
 from kgfq.workspace.store import Workspace
@@ -56,7 +61,7 @@ def test_projections(stats, genes, tmp_path):
     assert {(c.predicate, c.triples) for c in by_class} >= {(EX + "affects", 24), (EX + "mass", 12)}
     assert all(c.class_iri == EX + "Chemical" for c in by_class)
     by_pred = stats.class_properties(predicate=EX + "affects")
-    assert [(c.class_iri, c.triples) for c in by_pred] == [(EX + "Chemical", 24)]
+    assert by_pred == [ClassProperty(EX + "Chemical", EX + "affects", 24, 12, 5)]
     gep = Endpoint(genes.origin)
     try:
         gstats = Statistics(Workspace(tmp_path / "g"), gep, gep.release("genekg"))
@@ -65,6 +70,33 @@ def test_projections(stats, genes, tmp_path):
         assert gstats.class_relations(class_iri=EX + "Gene") == [
             r for r in relations if r.subject_class == EX + "Gene"
         ]
+    finally:
+        gep.close()
+
+
+def test_inventory_joins_the_three_reads_and_ranks_by_class_then_coverage(genes, tmp_path):
+    """C12: one row per (class, predicate), the class's entities beside it, the
+    object classes from class-relations, and absolute IRIs throughout."""
+    gep = Endpoint(genes.origin)
+    try:
+        gstats = Statistics(Workspace(tmp_path), gep, gep.release("genekg"))
+        with gep.trace() as t:
+            rows = gstats.inventory()
+        assert t.requests == 3
+        assert [r.class_iri for r in rows][:4] == [EX + "Gene"] * 4  # 7 entities before 3
+        gene = {r.predicate: r for r in rows if r.class_iri == EX + "Gene"}
+        pathway = gene[EX + "inPathway"]
+        assert (pathway.entities, pathway.triples, pathway.distinct_subjects) == (7, 7, 7)
+        assert pathway.distinct_objects == 3
+        assert pathway.object_classes == (EX + "Pathway",)
+        assert pathway.coverage == 1.0 and pathway.fanout == 1.0
+        assert gene[EX + "symbol"].object_classes == ()  # literal values: no relation row
+        assert all(
+            r.class_iri.startswith("http://") and r.predicate.startswith("http://") for r in rows
+        )
+        with gep.trace() as t2:
+            assert Statistics(Workspace(tmp_path), gep, gstats.release).inventory() == rows
+        assert t2.requests == 0
     finally:
         gep.close()
 

@@ -37,7 +37,7 @@ So one repository, one library, several skins:
 | `kgfq.cli`, console script `kgfq` | the CLI — the intent surface as shell commands, `explain`, `lint`, a marked raw mode, and a thin `sparql` wrapper |
 | `kgfq.mcp`, console script `kgfq-mcp` | the MCP server — the intent tools over the library and a sandboxed local DuckDB |
 | `kgfq.lint`, also `kgfq lint` | the SPARQL linter (`KGFQ001`–`KGFQ012`), usable standalone and by registry CI |
-| `skills/` | the agent skill: the loop, the count-before-fetch habit, reading cards |
+| `skills/` | the agent skills: `kgf-integration/` (the loop, the count-before-fetch habit, reading cards) and `verbalize-config/` (designing a verbalization config from the inventory, C12–C13) |
 | `bench/` | the evaluation harness, a first-class deliverable (§8) |
 
 One Python distribution, `kgfq`, because the strategy function must exist once and
@@ -340,6 +340,7 @@ kgfq/
     mcp/                  the MCP server
     cli/                  the CLI
   skills/kgf-integration/ the agent skill
+  skills/verbalize-config/ the verbalization-config skill (landed 2026-10-29; its draft is notes/verbalize-skill.md)
   bench/                  harness, corpora pins, frozen baselines (registry_corpus.py and its runs)
   docs/                   plan, receipt, intent and log-record schemas, author guide
   notes/                  this file
@@ -425,6 +426,19 @@ with no link is not; `filters` and `keysets` are verified from the manifest's
 artifact list; verdicts are cached per digest under `.kgfq/cache/capabilities/`.
 The registry seed list is not read yet — endpoints are explicit until `kgs.yaml`
 carries a `kgf:` field.
+*Landed 2026-10-29 — the descriptor cache.* "A pinned dataset resolves with zero
+requests" was true of the resolve and false of what followed it: every command then
+read the service descriptor (caps), the dataset descriptor (the release's links) and
+the manifest (prefixes) afresh, 2 to 3 requests before its first operation. Measured
+in the verbalization-skill comparison (`notes/verbalize-skill.md`): 94 of a
+session's 135 requests and 110 of another's 171 were these, invisible to receipts
+because they happen outside the operation's trace. `DescriptorCache` keeps the three
+under `.kgfq/cache/descriptors/` — the manifest by digest unconditionally, the
+service descriptor and a release's links only on the pinned path, written through on
+every fresh read so an unpinned resolve or `--release` still sees new datasets,
+releases and caps. `pins --clear` empties it. Checked against a live server: a
+pinned `inventory`, `sample` and `verbalize` in sequence cost three requests, each
+its own operation.
 
 ### C3. Statistics
 
@@ -450,6 +464,11 @@ ordering before any count; anything else goes to the server once. Batch counts
 send only the rows the cache has not seen. The planner reports the source of
 its count in the plan's evidence (`inventory:predicate`, `cache`, `server`), and
 `kgfq schema --all --children properties|classes` reads the cached inventory.
+*Landed 2026-10-29:* `kgfq schema --all --projection …` reads the same cache, with
+the same queryable-view substitution and an envelope assembled from the cache rather
+than a response; `ClassProperty` carries the server's `distinct_subjects` and
+`distinct_objects`, which it had been dropping (C12 needs both); a projection's cache
+key carries its view, so two views cannot share a file.
 
 ### C4. The strategy function
 
@@ -627,7 +646,9 @@ in `../kgf-explorer`: ruralkg writes 899 ZIPs without their leading zeros, space
 4,887 of 5,420, and the 533 lost ones, which dropped New England, New Jersey and Puerto
 Rico from an answer, showed only once a sample was printed; after repair, the 64 still
 unmatched were well-formed USPS ZIPs with no Census ZIP area, a different loss the same
-report caught. Schema `kgfq.receipt/3`. The handle `fetch` prints and returns (§6, §7)
+report caught. Schema `kgfq.receipt/3`; `kgfq.receipt/4` on 2026-10-29 adds the
+kinds `inventory` (C12) and `verbalize` (C13) to the enum and changes nothing else.
+The handle `fetch` prints and returns (§6, §7)
 carries `unmatched` and the sample, not only the sidecar: that is where it changes what
 an agent does next. Waits for the paged-completeness fix to `fetch_receipt` to land.
 
@@ -742,6 +763,103 @@ it — and the tool claims only what it proves: every number came from these tri
 through this script.
 
 *Verified by:* the trust corpus (§8).
+
+### C12. The inventory
+
+The class × predicate inventory as one table: for every (class, predicate) the
+class-properties projection publishes, the class's entity count beside the pair's
+`triples`, `distinct_subjects` and `distinct_objects`, the two ratios an agent judges
+a predicate by — **coverage** (`distinct_subjects / entities`: how many of the class
+carry it at all) and **fanout** (`triples / distinct_subjects`: values per subject
+that has one) — and the object classes class-relations records for the pair, empty
+when the values are literals or untyped IRIs (doc 03 §3.4.10). Ranked the way it is
+read: biggest classes first, and within a class the predicates most of its entities
+carry. Three reads, all C3's and all cached, so a second call in a release costs no
+request. The reader is not the planner: it is an agent deciding which predicates
+describe a class — for a verbalization config first (`notes/verbalize-skill.md`),
+for any schema question of the "what is a Gene made of" kind afterwards.
+
+Measured before building: sockg's complete inventory (27 M triples) is 90 classes,
+429 class-properties rows and 282 class-relations rows from 9 requests; dreamkg's is
+16, 116 and 157 from 6. That size is why this is a library join and a command, and
+not `--out` on `schema` plus C8: a join of ~800 rows wants no engine. `--out` files
+it as a table with a receipt graded `bundle` (D17's three questions answer cleanly:
+re-fetchable by digest, every row pointable at a schema page of an immutable
+release, origin the protocol's) whose `requests` carry the request ids the reads
+made and whose `intent.reads` says which of the three came from the cache.
+
+Absolute IRIs throughout, never CURIEs: what reads this table pastes IRIs into a
+server config, and `/verbalize` does not expand prefixes — a CURIE there is an
+`unknown[]` entry and a target with zero members (probed 2026-10-29 against a
+fixture bundle).
+
+*Verified by:* against a fixture server, `inventory` makes three requests the first
+time and none the second; the row for `Gene inPathway` carries entities 7,
+`distinct_subjects` 7, coverage 1.0, fanout 1.0 and object class `Pathway`; a literal
+predicate's object classes are empty; `--out` writes the Parquet with its receipt and
+a log step (`tests/test_statistics.py`, `tests/test_cli.py`).
+
+*Landed 2026-10-29* as `Statistics.inventory` (`InventoryRow`) and `kgfq inventory
+<dataset> [--out name]`, receipt kind `inventory` (`kgfq.receipt/4`). No `--class`
+or `--predicate` filter: the whole release's table is the unit, and ~800 rows need
+none. The JSON surface of sockg's inventory is 141,684 bytes with `indent=1`; the
+same rows as a tab-separated table with local names were 20,154 — the output
+format, not the table, is where the remaining size is, and `--out` plus any reader
+of Parquet is the answer rather than a second format.
+*2026-10-30:* the first remote run (climatemodelskg on FRINK) found every one of the
+47 bundles there publishing class-level partitions with `triples` only — built
+2026-09-05, before kgf-rs #19 (0.4.0, 2026-10-11) carried the distinct counts into
+class partitions; doc 04 §4.2 permits the absence. `inventory` had rendered it as
+four blank columns under a receipt saying complete. Now a release without the
+counts is named: one approximation in the receipt, `distinct_counts: false` in the
+handle, a `note:` line above the table, and a `triples_per_entity` column — the
+signal every release publishes — beside `coverage` and `fanout`. The skill says
+nothing about it: the tool says it when it applies, and stops when the bundles are
+rebuilt.
+
+### C13. Verbalize
+
+`/verbalize` run from the client: a verbalization config — the YAML `kgf vectors
+--config` consumes and publishes as `vectors/verbalize.json`, deciding which nodes
+become embedding documents and what text each gets — sent to a release and read back
+as the plan's per-target figures (`members`, `sampled`, `claimed_before`, length
+statistics, `truncated`, `limited`) and the sampled texts themselves. The endpoint is
+ungated: a root's star and the label cascade are artifacts every bundle carries, so
+a fixture with no `vectors` answers it, and a bundle that publishes no config
+answers only when the request brings one. It is in no design document (§11).
+
+What the command owns and what it does not. The config goes to the server **as
+text, verbatim** — never parsed here — so the grammar has one owner and a key it
+does not know is its 400, not ours; the IRIs it names that the graph lacks come back
+as `unknown[]` with the config path each sits at, and the command prints them first.
+The mode is the server's reading of what was named — IRIs under a target, a target
+alone, or neither — and the per-target table exists only in the first two, so
+`--out` in `iris` mode is refused with that sentence. The root cap is a rule over
+the whole plan, `targets × n ≤ max_verbalize_roots`, which a client could restate
+only by parsing the config to count targets; it is not restated, and the server's
+refusal — "lower n or name one target" — arrives verbatim. The plan is a table; the
+texts are a rendering, read with the eyes (`notes/verbalize-skill.md` §5).
+
+Probed 2026-10-29 against a fixture: the config's class key is `type`, not `class`
+(the Rust field is renamed on the wire — the kind of fact a skill hand-copies and
+gets wrong); CURIEs in a config are not expanded and surface as `unknown[]` with
+zero members; a renamed response field renames a column of the filed table rather
+than breaking it, because the targets are filed as the server sent them.
+
+*Verified by:* against a fixture server with a two-target config, the plan's figures
+and two sampled texts per target, `unknown[]` naming a predicate the config declares
+and the graph lacks, one root rendered by IRI, `--out` refused in that mode and
+writing the per-target Parquet in plan mode with the config recorded as an
+`external` input, `targets × n` over the cap relayed as the server's
+`cap_exceeded`, and the bundle-publishes-none refusal verbatim (`tests/test_cli.py`).
+
+*Landed 2026-10-29* as `Endpoint.verbalize` and `kgfq verbalize <dataset>
+[--config f] [--target t] [--iri i …] [-n N] [--seed S] [--plan] [--out name]`,
+receipt kind `verbalize` (`kgfq.receipt/4`), the config file an `external` input of
+the step with its SHA-256. The record's `rows` is the roots rendered, so a truncated
+plan is an incomplete receipt. Not done: a label-cascade default — the server already
+puts the release's `label` role cascade behind the config's own, so the agent never
+reads `/manifest` for it, and nothing was needed here.
 
 ## 5. SPARQL — how `kgfq` does and does not support it
 
@@ -989,6 +1107,8 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq datasets [--iri X \| --class C \| --text Q]` | find | registry + service descriptors (C2) |
 | `kgfq summary <ds>` | orient | `/summary`, Markdown to the terminal |
 | `kgfq schema <ds> [--class C \| --predicate P \| --projection …]` | drill | `/schema` |
+| `kgfq inventory <ds> [--out t]` | drill | the class × predicate table, ranked (C12) |
+| `kgfq verbalize <ds> [--config f] [--target t] [--iri …] [-n N] [--out t]` | verify | `/verbalize`: a config's plan and sampled texts (C13) |
 | `kgfq count <ds> <pattern> [--values file]` | verify | `/count`, batch form |
 | `kgfq sample <ds> <pattern> [-n]` | verify | `/sample` |
 | `kgfq resolve <text> [--datasets …] [--role label]` | situate | fan-out `/search` (C7) |
@@ -1003,6 +1123,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq sparql <file.rq> --dataset … [--endpoint url]` | complete | lint, then launch `kgf-sparql` (§5.2); refuses politely when it is not installed |
 | `kgfq raw <method> <path> [--body]` | debug | one unplanned request, output marked `unplanned` |
 | `kgfq receipt <table>` | audit | the receipt attached to a table |
+| `kgfq show <table> [--limit N]` | audit | a filed table's rows, printed back; a local read |
 | `kgfq replay [--from N]` | audit | re-execute the log's stored plans and compare hashes (C10) |
 | `kgfq cite <table> --row N` | audit | the source triples behind a row (C11) |
 | `kgfq report` | audit | the provenance document, generated from the log (C11) |
@@ -1019,7 +1140,17 @@ with a `?var` header; `--max-rows` records an R3 approximation in the receipt;
 [--timeout S] [--normalize] [--force]`; the handle names the contract, the table, the
 budget that ended an aborted run, the lint codes and the engine receipt's path.
 
-Conventions: JSON on stdout when not a TTY, tables when it is; `--out` writes files;
+*Landed 2026-10-29*: `inventory` (C12), `verbalize` (C13), and `--table`, which keeps
+the aligned text form when stdout is a pipe — an agent is never on a TTY, and the
+JSON form of sockg's inventory is 141,681 bytes against 103,083 aligned (the width
+is the IRIs; the three smaller local graphs are 11–25 KB). The verbalization skill
+asks for it on every command. `show <table>` landed the same day, from the
+comparison's second-most-cited friction: `fetch` files its rows and prints a
+receipt, and nothing printed the file back, so two agents exported CSV and
+parsed it by hand. It is a reader, not the SQL surface (C8), and does not grow
+into one.
+
+Conventions: JSON on stdout when not a TTY, tables when it is or `--table` asks; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the
 release-scoped statistics cache and the DuckDB scratch file, `tables/` the evidence,
 and `kgfq.log.jsonl` the script — so a multi-step task never straddles a release, a

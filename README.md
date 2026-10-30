@@ -25,7 +25,10 @@ uv run kgfq count ubergraph '? rdfs:subClassOf ?'      # from the cached invento
 uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
 uv run kgfq fetch phaseskg '? rdfs:label ?' --out labels   # tables/labels.parquet + receipt
 uv run kgfq receipt labels
+uv run kgfq show labels --limit 20                     # a filed table's rows
 uv run kgfq log
+uv run kgfq inventory dreamkg --table                  # class × predicate: coverage, fanout, object classes
+uv run kgfq verbalize dreamkg --config config.yaml -n 3 --table   # a config's plan and its sampled texts
 uv run kgfq lint query.rq                              # KGFQ001–KGFQ012; never rewrites
 uv run kgfq sparql query.rq --dataset prokn --out hits   # lint, then kgf-sparql to completion, or a budget
 ```
@@ -51,9 +54,16 @@ applies the two proven-equivalent rewrites (KGFQ001, KGFQ002) and records each. 
 engine is found through `KGFQ_KGF_SPARQL` or `PATH`; `npm install -g kgf-sparql`, or
 point the variable at `../kgf-sparql/packages/kgf-sparql/bin/kgf-sparql.js`.
 
+`kgfq inventory` and `kgfq verbalize` exist for the verbalization-config skill in
+`skills/verbalize-config/`, which an agent follows to write the config `kgf vectors
+--config` consumes. The skill carries the method; every server fact it would
+otherwise recite is rendered by one of these commands or validated by the server.
+`.claude/skills/` symlinks it so Claude Code finds it in a clone.
+
 The working directory is the workspace: `.kgfq/` holds endpoints, pins and caches,
 `tables/` the evidence with a receipt beside each file and inside it, and
-`kgfq.log.jsonl` the session log.
+`kgfq.log.jsonl` the session log. Output is JSON when stdout is a pipe and aligned
+text on a terminal; `--table` keeps the text form when piped.
 
 Tests spawn two real servers over bundles built with `kgf build`; they need the
 `kgf` and `hdtc` binaries, found through `KGFQ_KGF` and `KGFQ_HDTC` or the sibling

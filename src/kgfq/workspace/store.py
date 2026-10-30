@@ -19,6 +19,7 @@ import json
 import math
 import os
 import re
+import shutil
 import time
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -128,6 +129,9 @@ class Workspace:
         d = self.state / "cache" / kind
         d.mkdir(parents=True, exist_ok=True)
         return d
+
+    def clear_cache(self, kind: str) -> None:
+        shutil.rmtree(self.state / "cache" / kind, ignore_errors=True)
 
     def scratch_dir(self) -> Path:
         d = self.state / "scratch"

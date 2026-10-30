@@ -61,7 +61,7 @@ def test_select_files_a_table_a_receipt_and_the_engine_receipt(ws, tmp_path):
     assert set(table.column("l_lang").to_pylist()) == {"en"}
     assert table.column("c_datatype").to_pylist() == [None] * 12
     receipt, _ = run("receipt", "labels", workspace=ws)
-    assert receipt["schema"] == "kgfq.receipt/3" and receipt["kind"] == "sparql"
+    assert receipt["schema"] == "kgfq.receipt/4" and receipt["kind"] == "sparql"
     [source] = receipt["sources"]
     assert source["dataset"] == "chemkg" and source["version"] == "2026-09-01"
     assert (

@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 
+import pyarrow.parquet as pq
 import pytest
 
 from kgfq.cli import _tokenize, main
@@ -26,6 +27,18 @@ def ws(tmp_path, chem, genes):
     run("endpoints", "add", chem.origin, workspace=tmp_path)
     run("endpoints", "add", genes.origin, workspace=tmp_path)
     return tmp_path
+
+
+def test_table_forces_text_when_piped(ws):
+    out = io.StringIO()
+    assert main(["--workspace", str(ws), "--table", "inventory", "genekg"], out=out) == 0
+    lines = out.getvalue().splitlines()
+    assert lines[0].split()[:3] == ["class", "predicate", "entities"]
+    assert lines[1].split()[:2] == ["http://example.org/Gene", "http://example.org/inPathway"]
+    assert not out.getvalue().lstrip().startswith("{")
+    trailing = io.StringIO()
+    assert main(["--workspace", str(ws), "inventory", "genekg", "--table"], out=trailing) == 0
+    assert trailing.getvalue() == out.getvalue()
 
 
 def test_tokenize_keeps_literals_and_iris_whole():
@@ -104,7 +117,7 @@ def test_fetch_max_rows_is_an_approximation_only_when_rows_remained(ws):
     assert handle["rows"] == 5 and handle["complete"] is False
     assert "--max-rows 5" in handle["approximations"][0]
     receipt, _ = run("receipt", "few", workspace=ws)
-    assert receipt["schema"] == "kgfq.receipt/3"
+    assert receipt["schema"] == "kgfq.receipt/4"
     assert receipt["completeness"]["incomplete_because"] == ["max_rows"]
     handle, _ = run(
         "fetch", "chemkg", "?c ex:affects ?g", "--max-rows", "24", "--out", "all", workspace=ws
@@ -146,6 +159,190 @@ def test_fetch_to_csv_path_with_receipt_beside_it(ws, tmp_path):
         "fetch", "chemkg", "? rdfs:label ?", "--out", "few", "--max-rows", "5", workspace=ws
     )
     assert handle["rows"] == 5 and handle["approximations"] and "R3" in handle["approximations"][0]
+
+
+def test_show_prints_a_filed_table(ws):
+    run("fetch", "genekg", "? ex:inPathway ?", "--out", "paths", workspace=ws)
+    payload, _ = run("show", "paths", workspace=ws)
+    assert payload["columns"][:3] == ["s", "p", "o"] and payload["total_rows"] == 7
+    assert payload["shown"] == 7 and all(
+        r["p"] == "http://example.org/inPathway" for r in payload["rows"]
+    )
+    payload, _ = run("show", "paths", "--limit", "2", workspace=ws)
+    assert payload["shown"] == 2 and payload["total_rows"] == 7
+    text = io.StringIO()
+    assert main(["--workspace", str(ws), "show", "paths", "--limit", "2", "--table"], out=text) == 0
+    assert text.getvalue().splitlines()[0].split()[:3] == ["s", "p", "o"]
+    assert text.getvalue().rstrip().endswith("(2 of 7 rows; --limit 0 for all)")
+
+
+def test_inventory_is_one_ranked_table_from_cached_reads(ws):
+    """C12: the three reads once, the table ranked, absolute IRIs, and on
+    --out a Parquet file with its receipt and a log step."""
+    payload, _ = run("inventory", "genekg", workspace=ws)
+    assert payload["reads"] == {
+        "classes": "server",
+        "class-properties": "server",
+        "class-relations": "server",
+    }
+    assert payload["view"] == "queryable" and payload["columns"][:2] == ["class", "predicate"]
+    rows = payload["rows"]
+    assert [r["entities"] for r in rows] == sorted((r["entities"] for r in rows), reverse=True)
+    pathway = next(r for r in rows if r["predicate"] == "http://example.org/inPathway")
+    assert pathway["class"] == "http://example.org/Gene"
+    assert (pathway["entities"], pathway["distinct_subjects"], pathway["triples"]) == (7, 7, 7)
+    assert (pathway["coverage"], pathway["fanout"]) == (1.0, 1.0)
+    assert pathway["object_classes"] == "http://example.org/Pathway"
+
+    handle, _ = run("inventory", "genekg", "--out", "inv", workspace=ws)
+    assert handle["requests"] == 0 and set(handle["reads"].values()) == {"cache"}
+    assert handle["rows"] == len(rows) and handle["grade"] == "bundle"
+    table = pq.read_table(ws / "tables" / "inv.parquet")
+    assert table.column_names == payload["columns"]
+    assert table.column("predicate").to_pylist()[: len(rows)] == [r["predicate"] for r in rows]
+    receipt, _ = run("receipt", "inv", workspace=ws)
+    assert receipt["kind"] == "inventory" and receipt["intent"]["reads"] == handle["reads"]
+    text = io.StringIO()  # the trailing flag must not shadow receipt's positional
+    assert main(["--workspace", str(ws), "receipt", "inv", "--table"], out=text) == 0
+    assert text.getvalue().startswith("{")  # a receipt has no table form; JSON still
+    assert receipt["completeness"]["complete"] is True and receipt["requests"] == []
+    log, _ = run("log", workspace=ws)
+    assert [s["command"] for s in log["steps"]][-2:] == ["inventory", "inventory"]
+    assert log["steps"][-1]["output"]["table"] == "inv"
+
+    assert payload["distinct_counts"] is True and payload["approximations"] == []
+    assert pathway["triples_per_entity"] == 1.0
+
+    # the same projection through `schema --all` now reads the cache too
+    schema, _ = run("schema", "genekg", "--projection", "class-relations", "--all", workspace=ws)
+    assert schema["view"] == "queryable" and schema["complete"] is True
+    assert {i["predicate"]["value"] for i in schema["items"]} == {"http://example.org/inPathway"}
+    assert log_requests(ws) == 0
+
+
+GENES_CONFIG = """
+targets:
+  gene:
+    type: http://example.org/Gene
+    include_predicates: ['http://example.org/symbol', 'http://example.org/inPathway']
+  pathway:
+    type: http://example.org/Pathway
+    include_predicates: ['http://example.org/nosuch']
+"""
+
+
+def test_verbalize_runs_a_config_and_files_the_plan(ws, tmp_path):
+    """C13: the config goes to the server verbatim; the plan comes back as
+    per-target figures and sampled texts; `unknown[]` names what the config
+    declared that the graph lacks; n is held to the cap; --out files the plan."""
+    config = tmp_path / "genes.verbalize.yaml"
+    config.write_text(GENES_CONFIG)
+    payload, _ = run(
+        "verbalize", "genekg", "--config", str(config), "-n", "2", "--seed", "1", workspace=ws
+    )
+    assert payload["mode"] == "plan" and payload["n"] == 2 and payload["seed"] == 1
+    assert payload["unknown"] == [
+        {"at": "targets.pathway.include_predicates", "iri": "http://example.org/nosuch"}
+    ]
+    by_name = {t["name"]: t for t in payload["targets"]}
+    assert (by_name["gene"]["members"], by_name["gene"]["sampled"]) == (7, 2)
+    assert by_name["pathway"]["members"] == 3
+    gene_records = [r for r in payload["records"] if r["target"] == "gene"]
+    assert len(gene_records) == 2
+    assert all(
+        "symbol: G" in r["text"] and "in pathway: Pathway" in r["text"] for r in gene_records
+    )
+    assert all(r["iri"]["value"].startswith("http://example.org/gene/") for r in gene_records)
+
+    # one root by IRI, under its target: records only, nothing to file
+    payload, _ = run(
+        "verbalize",
+        "genekg",
+        "--config",
+        str(config),
+        "--target",
+        "gene",
+        "--iri",
+        "http://example.org/gene/G1",
+        workspace=ws,
+    )
+    assert payload["mode"] == "iris" and [r["label"] for r in payload["records"]] == ["GENE 1"]
+    _, err = run(
+        "verbalize",
+        "genekg",
+        "--config",
+        str(config),
+        "--target",
+        "gene",
+        "--iri",
+        "http://example.org/gene/G1",
+        "--out",
+        "x",
+        workspace=ws,
+        expect=2,
+    )
+    assert "mode 'iris' has none" in err
+
+    # the root cap is the server's rule over the whole plan (targets x n): verbatim
+    _, err = run("verbalize", "genekg", "--config", str(config), "-n", "60", workspace=ws, expect=2)
+    problem = json.loads(err)
+    assert problem["code"] == "cap_exceeded" and "lower n or name one target" in problem["detail"]
+
+    # --out: the targets as a table, the receipt naming the config as an input
+    payload, _ = run("verbalize", "genekg", "--config", str(config), "--out", "plan", workspace=ws)
+    assert payload["table"]["rows"] == 2
+    table = pq.read_table(ws / "tables" / "plan.parquet")
+    assert table.column("name").to_pylist() == ["gene", "pathway"]
+    assert set(table.column_names) >= {"members", "sampled", "mean_chars", "truncated"}
+    receipt, _ = run("receipt", "plan", workspace=ws)
+    assert receipt["kind"] == "verbalize" and receipt["intent"]["mode"] == "plan"
+    assert receipt["intent"]["config"] == str(config)
+    assert receipt["inputs"][str(config)]["kind"] == "external"
+    assert receipt["completeness"]["complete"] is True and receipt["totals"]["requests"] == 1
+    assert receipt["approximations"] == []
+
+    # no config and a bundle that publishes none: the server's problem document, verbatim
+    _, err = run("verbalize", "genekg", workspace=ws, expect=2)
+    problem = json.loads(err)
+    assert problem["code"] == "malformed_request" and "config is required" in problem["detail"]
+
+
+def test_inventory_names_a_release_without_distinct_counts(ws):
+    """Doc 04 §4.2 lets a bundle leave the class-level distinct counts empty
+    (every bundle built before kgf 0.4.0 does). The inventory then says so in
+    the receipt, the handle and the table, and triples_per_entity stands in."""
+    run("inventory", "genekg", workspace=ws)  # fills the C3 cache
+    cached = next((ws / ".kgfq" / "cache" / "stats").glob("*/class-properties.json"))
+    items = json.loads(cached.read_text())
+    for item in items:
+        item.pop("distinct_subjects", None)
+        item.pop("distinct_objects", None)
+    cached.write_text(json.dumps(items))
+
+    payload, _ = run("inventory", "genekg", workspace=ws)
+    assert payload["distinct_counts"] is False
+    assert payload["approximations"] == [
+        "this release publishes no class-level distinct_subjects/distinct_objects "
+        "(bundles built before kgf 0.4.0): coverage and fanout are empty; triples_per_entity "
+        "is the available signal, and sampling members stands in for coverage"
+    ]
+    gene = next(r for r in payload["rows"] if r["predicate"] == "http://example.org/inPathway")
+    assert (gene["coverage"], gene["fanout"], gene["distinct_subjects"]) == (None, None, None)
+    assert gene["triples_per_entity"] == 1.0 and gene["entities"] == 7
+    handle, _ = run("inventory", "genekg", "--out", "nodist", workspace=ws)
+    assert handle["distinct_counts"] is False
+    receipt, _ = run("receipt", "nodist", workspace=ws)
+    assert receipt["approximations"] == payload["approximations"]
+    text = io.StringIO()
+    assert main(["--workspace", str(ws), "inventory", "genekg", "--table"], out=text) == 0
+    assert text.getvalue().startswith("note: this release publishes no class-level")
+
+
+def log_requests(ws) -> int:
+    """Requests the last log step made."""
+    log, _ = run("log", "--last", "1", workspace=ws)
+    receipt = log["steps"][-1].get("receipt") or {}
+    return receipt.get("requests", receipt.get("totals", {}).get("requests", 0))
 
 
 def test_errors_are_the_servers_problem_document(ws, tmp_path):

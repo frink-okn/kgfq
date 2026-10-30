@@ -1,5 +1,6 @@
 import pytest
 
+from kgfq.client.endpoint import Endpoint
 from kgfq.client.session import AmbiguousDataset, Session, UnknownDataset
 from kgfq.workspace.store import Workspace
 from tests.conftest import FIXTURES, build_bundle, spawn_server
@@ -33,6 +34,26 @@ def test_resolve_pins_and_reuses_the_pin(session, chem):
         ep2, rel2 = session.resolve("chemkg")
     assert (ep2.origin, rel2.version) == (ep.origin, rel.version)
     assert t.requests == 0, "a pinned dataset resolves without touching the network"
+
+
+def test_pinned_resolve_makes_no_request(session, chem, monkeypatch):
+    """C2: the service descriptor, the release's links and the manifest come
+    from the workspace once a graph is pinned; a second session reads nothing."""
+    ep, rel = session.resolve("chemkg")
+    ep.prefixes(rel)  # the manifest, now cached by digest
+    again = Session(session.workspace)
+
+    def refuse(self, *a, **k):
+        raise AssertionError(f"request on the pinned path: {a[0] if a else k}")
+
+    monkeypatch.setattr(Endpoint, "get", refuse)
+    ep2, rel2 = again.resolve("chemkg")
+    assert rel2 == rel and ep2.caps == ep.caps and ep2.prefixes(rel2) == ep.prefixes(rel)
+    assert rel2.link("schema") == rel.link("schema")
+    again.close()
+    session.workspace.clear_cache("descriptors")
+    with pytest.raises(AssertionError, match="pinned path"):
+        Session(session.workspace).resolve("chemkg")
 
 
 def test_resolve_by_dataset_iri_and_explicit_origin(session, genes):

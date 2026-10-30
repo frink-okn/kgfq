@@ -1,6 +1,7 @@
 """``kgfq`` — the intent surface as shell commands (plan §6).
 
-JSON on stdout when it is not a TTY, aligned text when it is. Every error from
+JSON on stdout when it is not a TTY, aligned text when it is or ``--table``
+asks (an agent is never on a TTY, and reads text). Every error from
 a server is its problem document, verbatim. Every command that touches the
 network or writes a table appends one record to the workspace log (C9).
 """
@@ -8,6 +9,7 @@ network or writes a table appends one record to the workspace log (C9).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import dataclasses
 import hashlib
@@ -50,6 +52,25 @@ from ..workspace.log import Step
 from ..workspace.receipts import fetch_receipt
 from ..workspace.store import Workspace, WorkspaceError
 
+INVENTORY_COLUMNS = [
+    "class",
+    "predicate",
+    "entities",
+    "distinct_subjects",
+    "triples",
+    "distinct_objects",
+    "coverage",
+    "fanout",
+    "triples_per_entity",
+    "object_classes",
+]
+
+NO_DISTINCT_COUNTS = (
+    "this release publishes no class-level distinct_subjects/distinct_objects "
+    "(bundles built before kgf 0.4.0): coverage and fanout are empty; triples_per_entity "
+    "is the available signal, and sampling members stands in for coverage"
+)
+
 DEFAULT_PREFIXES = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -63,7 +84,8 @@ class Cli:
         self.args = args
         self.out = out or sys.stdout
         self.err = err or sys.stderr
-        self.json = bool(args.json) or not (hasattr(self.out, "isatty") and self.out.isatty())
+        tty = hasattr(self.out, "isatty") and self.out.isatty()
+        self.json = bool(args.json) or (not tty and not getattr(args, "as_table", False))
         self.workspace = Workspace(args.workspace)
         self.session = Session(self.workspace, skin="kgfq", origins_override=args.endpoint or None)
 
@@ -188,13 +210,15 @@ class Cli:
             params["limit"] = a.limit
         step = self.step("schema", dataset=a.dataset, params=params, all=a.all)
         step.pin(_pin(ep, rel))
+        unfiltered = not any(k in params for k in ("class", "predicate", "datatype", "view"))
         inventory = (
             a.all
+            and unfiltered
             and params.get("children") in ("properties", "classes")
-            and not any(
-                k in params for k in ("class", "predicate", "datatype", "view", "projection")
-            )
+            and "projection" not in params
         )
+        projection = a.all and unfiltered and "projection" in params and "children" not in params
+        body: dict[str, Any]
         with ep.trace() as t:
             if inventory:
                 # the cached inventory (C3): the queryable view, whose numbers
@@ -205,6 +229,20 @@ class Cli:
                 body["items"] = stats.items(params["children"])
                 body["complete"] = True
                 body["next"] = None
+            elif projection:
+                # the cached projection, the same view and the same once-per-release;
+                # the envelope is assembled here, not a response
+                stats = self.stats(ep, rel)
+                body = {
+                    "dataset": rel.dataset,
+                    "version": rel.version,
+                    "view": "queryable",
+                    "projection": params["projection"],
+                    "filters": {},
+                    "items": stats.projection(params["projection"]),
+                    "complete": True,
+                    "next": None,
+                }
             elif a.all and ("children" in params or "projection" in params):
                 items = list(ep.schema_items(rel, params))
                 page = ep.schema_page(rel, {k: v for k, v in params.items() if k != "cursor"})
@@ -230,6 +268,223 @@ class Cli:
             header=["kind", "term", "counts"],
         )
         return 0
+
+    def inventory(self) -> int:
+        """C12: the class x predicate inventory as one table — which predicates
+        describe a class, how many of its entities carry each, how many values
+        each gets — ranked, with absolute IRIs, and filed with a receipt on
+        ``--out``. Three reads from the C3 cache, so a second run costs nothing."""
+        a = self.args
+        ep, rel = self.resolve(a.dataset)
+        step = self.step("inventory", dataset=a.dataset, out=a.out)
+        step.pin(_pin(ep, rel))
+        stats = self.stats(ep, rel)
+        cached = set(stats.cached_names())
+        reads = {
+            name: "cache" if name in cached else "server"
+            for name in ("classes", "class-properties", "class-relations")
+        }
+        with ep.trace() as t:
+            rows = stats.inventory()
+            # doc 04 §4.2: the distinct counts are empty when the source
+            # partition does not state them — every bundle built before kgf
+            # 0.4.0. An absence the skill is written around is said, not blank.
+            distinct_counts = any(r.distinct_subjects is not None for r in rows)
+            approximations = [] if distinct_counts or not rows else [NO_DISTINCT_COUNTS]
+            receipt = fetch_receipt(
+                step=step.step,
+                kind="inventory",
+                release=rel,
+                intent={"operation": "inventory", "view": "queryable", "reads": reads},
+                plan=None,
+                trace=t,
+                approximations=approximations,
+            )
+        columns = INVENTORY_COLUMNS
+        records: list[dict[str, Any]] = [
+            {
+                "class": r.class_iri,
+                "predicate": r.predicate,
+                "entities": r.entities,
+                "distinct_subjects": r.distinct_subjects,
+                "triples": r.triples,
+                "distinct_objects": r.distinct_objects,
+                "coverage": r.coverage,
+                "fanout": r.fanout,
+                "triples_per_entity": r.triples_per_entity,
+                "object_classes": " ".join(r.object_classes),
+            }
+            for r in rows
+        ]
+        table = pa.table({c: [rec[c] for rec in records] for c in columns})
+        step.receipt({k: receipt[k] for k in ("totals", "completeness", "approximations", "grade")})
+        if not self.json and approximations:
+            self.out.write(f"note: {approximations[0]}\n\n")
+        if a.out:
+            info = write_output(self.workspace, a.out, table, receipt)
+            step.output(
+                table=info["table"],
+                path=info["path"],
+                rows=table.num_rows,
+                content_hash=info["content_hash"],
+            )
+            step.finish()
+            handle = {
+                "table": info["table"],
+                "path": info["path"],
+                "rows": table.num_rows,
+                "columns": columns,
+                "grade": receipt["grade"],
+                "requests": receipt["totals"]["requests"],
+                "reads": reads,
+                "distinct_counts": distinct_counts,
+                "approximations": approximations,
+                "step": step.step,
+                "content_hash": info["content_hash"],
+            }
+            self.emit(handle, table=[[k, v] for k, v in handle.items()], header=["field", "value"])
+            return 0
+        step.output(rows=table.num_rows)
+        step.finish()
+        self.emit(
+            {
+                "dataset": rel.dataset,
+                "version": rel.version,
+                "content_digest": rel.content_digest,
+                "view": "queryable",
+                "reads": reads,
+                "distinct_counts": distinct_counts,
+                "approximations": approximations,
+                "columns": columns,
+                "rows": records,
+            },
+            table=[
+                [
+                    rec["class"],
+                    rec["predicate"],
+                    rec["entities"],
+                    rec["distinct_subjects"],
+                    rec["triples"],
+                    rec["distinct_objects"],
+                    _ratio(rec["coverage"], 3),
+                    _ratio(rec["fanout"], 1),
+                    _ratio(rec["triples_per_entity"], 1),
+                    rec["object_classes"],
+                ]
+                for rec in records
+            ],
+            header=columns,
+        )
+        return 0
+
+    def verbalize(self) -> int:
+        """C13: a verbalization config run against a release — the plan's
+        per-target figures as a table, the sampled texts as a rendering, and the
+        IRIs the config names that the graph does not have. The root cap is the
+        server's rule over the whole plan (targets x n), so it is not restated
+        here: its refusal arrives verbatim and says what to lower."""
+        a = self.args
+        ep, rel = self.resolve(a.dataset)
+        config_text = Path(a.config).read_text() if a.config else None
+        step = self.step(
+            "verbalize",
+            dataset=a.dataset,
+            config=a.config,
+            target=a.target,
+            iris=a.iri or [],
+            n=a.n,
+            seed=a.seed,
+            plan=a.plan,
+            out=a.out,
+        )
+        step.pin(_pin(ep, rel))
+        inputs = {str(a.config): step.input_file(Path(a.config))} if a.config else {}
+        with ep.trace() as t:
+            page = ep.verbalize(
+                rel,
+                config_text=config_text,
+                target=a.target,
+                iris=a.iri or [],
+                n=a.n,
+                seed=a.seed,
+                plan=a.plan,
+            )
+            body: dict[str, Any] = dict(page.body or {})
+            receipt = fetch_receipt(
+                step=step.step,
+                kind="verbalize",
+                release=rel,
+                intent={
+                    "operation": "verbalize",
+                    "mode": body.get("mode"),
+                    "config": a.config or "bundle",
+                    "target": a.target,
+                    "iris": a.iri or [],
+                    "n": a.n,
+                    "seed": a.seed,
+                },
+                plan=None,
+                trace=t,
+                inputs=inputs,
+            )
+        targets: list[dict[str, Any]] = list(body.get("targets") or [])
+        payload: dict[str, Any] = dict(body)
+        step.receipt({k: receipt[k] for k in ("totals", "completeness", "approximations", "grade")})
+        if a.out:
+            if not targets:
+                raise KgfqError(
+                    f"--out files the plan's per-target figures, and mode {body.get('mode')!r} has none"
+                )
+            table = pa.Table.from_pylist(targets)
+            info = write_output(self.workspace, a.out, table, receipt)
+            step.output(
+                table=info["table"],
+                path=info["path"],
+                rows=table.num_rows,
+                content_hash=info["content_hash"],
+            )
+            payload["table"] = {
+                "table": info["table"],
+                "path": info["path"],
+                "rows": table.num_rows,
+                "content_hash": info["content_hash"],
+            }
+        else:
+            step.output(records=len(body.get("records") or []))
+        step.finish()
+        if self.json:
+            self.emit(payload)
+            return 0
+        self._render_verbalize(payload, targets)
+        return 0
+
+    def _render_verbalize(self, payload: dict[str, Any], targets: list[dict[str, Any]]) -> None:
+        """The plan as a table, the texts as paragraphs — they are read, not parsed."""
+        out = self.out
+        if payload.get("unknown"):
+            out.write("unknown — the config names these and the graph has none:\n")
+            for u in payload["unknown"]:
+                out.write(f"  {u.get('at')}: {u.get('iri')}\n")
+            out.write("\n")
+        if targets:
+            header = list(targets[0].keys())
+            self.emit(None, table=[[t.get(k) for k in header] for t in targets], header=header)
+            out.write("\n")
+        for r in payload.get("records") or []:
+            iri = r.get("iri", {}).get("value") if isinstance(r.get("iri"), dict) else r.get("iri")
+            flags = []
+            if r.get("truncated"):
+                flags.append("truncated")
+            if r.get("limited"):
+                flags.append(f"limited {r['limited']}")
+            tail = f", {', '.join(flags)}" if flags else ""
+            out.write(
+                f"== {r.get('target')}  <{iri}>  {r.get('label', '')}  "
+                f"({r.get('chars')} chars, {r.get('lines')} lines{tail})\n"
+            )
+            out.write((r.get("text") or "") + "\n\n")
+        if "table" in payload:
+            out.write(f"filed: {payload['table']['path']}\n")
 
     def count(self) -> int:
         a = self.args
@@ -665,6 +920,32 @@ class Cli:
         self.emit(self.workspace.read_receipt(self.args.table))
         return 0
 
+    def show(self) -> int:
+        """A filed table's rows, printed back — what `inventory` without `--out`
+        does for its own table, for any table in the workspace. A local read:
+        no request, no log step. The default limit keeps a million-row fetch
+        from scrolling past; `--limit 0` is all of it."""
+        a = self.args
+        table = self.workspace.read_table(a.table)
+        total = table.num_rows
+        if a.limit:
+            table = table.slice(0, a.limit)
+        rows = table.to_pylist()
+        self.emit(
+            {
+                "table": a.table,
+                "columns": table.column_names,
+                "rows": rows,
+                "total_rows": total,
+                "shown": len(rows),
+            },
+            table=[[r[c] for c in table.column_names] for r in rows],
+            header=table.column_names,
+        )
+        if not self.json and len(rows) < total:
+            self.out.write(f"({len(rows)} of {total} rows; --limit 0 for all)\n")
+        return 0
+
     def log(self) -> int:
         records = self.workspace.read_log()
         if self.args.last:
@@ -682,6 +963,7 @@ class Cli:
     def pins(self) -> int:
         if self.args.clear:
             self.workspace.unpin()
+            self.workspace.clear_cache("descriptors")
         pins = self.workspace.pins()
         self.emit(
             {k: p.as_dict() for k, p in pins.items()},
@@ -704,6 +986,10 @@ def _pin(ep: Endpoint, rel: Release) -> dict[str, Any]:
         "content_digest": rel.content_digest,
         "dataset_iri": rel.dataset_iri,
     }
+
+
+def _ratio(v: float | None, places: int) -> str:
+    return "" if v is None else f"{v:.{places}f}"
 
 
 def _cell(v: Any) -> str:
@@ -853,6 +1139,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--json", action="store_true", help="JSON output even on a TTY")
     p.add_argument(
+        "--table",
+        dest="as_table",
+        action="store_true",
+        help="aligned text even when piped: the form a reader reads, not a parser",
+    )
+    p.add_argument(
         "--endpoint",
         action="append",
         help="use this origin instead of the workspace's endpoints (repeatable)",
@@ -886,6 +1178,13 @@ def build_parser() -> argparse.ArgumentParser:
     sc.add_argument("--limit", type=int)
     sc.add_argument("--all", action="store_true", help="follow cursors to the end")
 
+    inv = sub.add_parser(
+        "inventory",
+        help="the class x predicate inventory, ranked: which predicates describe a class",
+    )
+    inv.add_argument("dataset")
+    inv.add_argument("--out", help="table name, or a .parquet/.csv/.json path")
+
     for name, help_ in (
         ("count", "count a pattern, or each row of --values"),
         ("explain", "print the plan for a fetch without executing it"),
@@ -898,6 +1197,21 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "fetch":
             c.add_argument("--out", help="table name, or a .parquet/.csv/.json path")
             c.add_argument("--max-rows", type=int)
+
+    vb = sub.add_parser(
+        "verbalize",
+        help="run a verbalization config against a release: the plan's figures, the sampled texts",
+    )
+    vb.add_argument("dataset")
+    vb.add_argument(
+        "--config", help="the config, YAML or JSON (default: the one the bundle publishes)"
+    )
+    vb.add_argument("--target", help="one target by name: its sample, or with --plan its figures")
+    vb.add_argument("--iri", action="append", help="render this root under --target (repeatable)")
+    vb.add_argument("-n", type=int, help="roots per target; targets x n is capped by the server")
+    vb.add_argument("--seed", type=int)
+    vb.add_argument("--plan", action="store_true", help="the plan for --target alone")
+    vb.add_argument("--out", help="file the per-target figures: a table name or a path")
 
     sm = sub.add_parser("sample", help="a seeded sample of a pattern")
     sm.add_argument("dataset")
@@ -983,10 +1297,24 @@ def build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser("receipt", help="the receipt attached to a table")
     r.add_argument("table")
+    sh = sub.add_parser("show", help="print a filed table's rows")
+    sh.add_argument("table")
+    sh.add_argument("--limit", type=int, default=100, help="rows to print (default 100; 0 for all)")
     lg = sub.add_parser("log", help="the session log")
     lg.add_argument("--last", type=int)
     pi = sub.add_parser("pins", help="the pinned releases")
     pi.add_argument("--clear", action="store_true")
+    # --json and --table read naturally after the command too; SUPPRESS keeps a
+    # subcommand's absent flag from overwriting the global one with False
+    for command in sub.choices.values():
+        for flag, dest in (("--json", "json"), ("--table", "as_table")):
+            command.add_argument(
+                flag,
+                dest=dest,
+                action="store_true",
+                default=argparse.SUPPRESS,
+                help=argparse.SUPPRESS,
+            )
     return p
 
 
@@ -1005,6 +1333,11 @@ def main(argv: Sequence[str] | None = None, out=None, err=None) -> int:
     except (KgfqError, BadTermSyntax, WorkspaceError, TransportError, FileNotFoundError) as e:
         cli.err.write(f"kgfq: {e}\n")
         return 2
+    except BrokenPipeError:
+        # `kgfq … | head`: the reader stopped, which is not an error of ours
+        with contextlib.suppress(OSError):
+            cli.out.close()
+        return 0
     finally:
         cli.session.close()
 
