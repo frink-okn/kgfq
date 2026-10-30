@@ -54,6 +54,9 @@ uv run pytest
   server (D14).
 - Errors from a server are its problem document, verbatim. Never paraphrase.
 - Local-only (D13). Do not propose a hosted variant.
+- A skill in `skills/` carries method, not server facts: a field name, a cap, a
+  label rule, a config key belongs in a command that renders it or in the server's
+  validation, never in prose an agent copies. `.claude/skills/` symlinks each one.
 
 ## Keeping the plan current
 
