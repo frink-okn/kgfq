@@ -99,6 +99,14 @@ class InventoryRow:
             return None
         return self.triples / self.distinct_subjects
 
+    @property
+    def triples_per_entity(self) -> float | None:
+        """Values per member of the class, whether or not it has one — the
+        signal every release publishes, since it needs no distinct count."""
+        if not self.entities:
+            return None
+        return self.triples / self.entities
+
 
 @dataclass(frozen=True, slots=True)
 class Estimate:

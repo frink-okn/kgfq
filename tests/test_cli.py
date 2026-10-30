@@ -210,6 +210,9 @@ def test_inventory_is_one_ranked_table_from_cached_reads(ws):
     assert [s["command"] for s in log["steps"]][-2:] == ["inventory", "inventory"]
     assert log["steps"][-1]["output"]["table"] == "inv"
 
+    assert payload["distinct_counts"] is True and payload["approximations"] == []
+    assert pathway["triples_per_entity"] == 1.0
+
     # the same projection through `schema --all` now reads the cache too
     schema, _ = run("schema", "genekg", "--projection", "class-relations", "--all", workspace=ws)
     assert schema["view"] == "queryable" and schema["complete"] is True
@@ -302,6 +305,37 @@ def test_verbalize_runs_a_config_and_files_the_plan(ws, tmp_path):
     _, err = run("verbalize", "genekg", workspace=ws, expect=2)
     problem = json.loads(err)
     assert problem["code"] == "malformed_request" and "config is required" in problem["detail"]
+
+
+def test_inventory_names_a_release_without_distinct_counts(ws):
+    """Doc 04 §4.2 lets a bundle leave the class-level distinct counts empty
+    (every bundle built before kgf 0.4.0 does). The inventory then says so in
+    the receipt, the handle and the table, and triples_per_entity stands in."""
+    run("inventory", "genekg", workspace=ws)  # fills the C3 cache
+    cached = next((ws / ".kgfq" / "cache" / "stats").glob("*/class-properties.json"))
+    items = json.loads(cached.read_text())
+    for item in items:
+        item.pop("distinct_subjects", None)
+        item.pop("distinct_objects", None)
+    cached.write_text(json.dumps(items))
+
+    payload, _ = run("inventory", "genekg", workspace=ws)
+    assert payload["distinct_counts"] is False
+    assert payload["approximations"] == [
+        "this release publishes no class-level distinct_subjects/distinct_objects "
+        "(bundles built before kgf 0.4.0): coverage and fanout are empty; triples_per_entity "
+        "is the available signal, and sampling members stands in for coverage"
+    ]
+    gene = next(r for r in payload["rows"] if r["predicate"] == "http://example.org/inPathway")
+    assert (gene["coverage"], gene["fanout"], gene["distinct_subjects"]) == (None, None, None)
+    assert gene["triples_per_entity"] == 1.0 and gene["entities"] == 7
+    handle, _ = run("inventory", "genekg", "--out", "nodist", workspace=ws)
+    assert handle["distinct_counts"] is False
+    receipt, _ = run("receipt", "nodist", workspace=ws)
+    assert receipt["approximations"] == payload["approximations"]
+    text = io.StringIO()
+    assert main(["--workspace", str(ws), "inventory", "genekg", "--table"], out=text) == 0
+    assert text.getvalue().startswith("note: this release publishes no class-level")
 
 
 def log_requests(ws) -> int:

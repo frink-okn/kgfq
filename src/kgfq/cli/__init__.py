@@ -9,6 +9,7 @@ network or writes a table appends one record to the workspace log (C9).
 from __future__ import annotations
 
 import argparse
+import contextlib
 import csv
 import dataclasses
 import hashlib
@@ -60,8 +61,15 @@ INVENTORY_COLUMNS = [
     "distinct_objects",
     "coverage",
     "fanout",
+    "triples_per_entity",
     "object_classes",
 ]
+
+NO_DISTINCT_COUNTS = (
+    "this release publishes no class-level distinct_subjects/distinct_objects "
+    "(bundles built before kgf 0.4.0): coverage and fanout are empty; triples_per_entity "
+    "is the available signal, and sampling members stands in for coverage"
+)
 
 DEFAULT_PREFIXES = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -278,6 +286,11 @@ class Cli:
         }
         with ep.trace() as t:
             rows = stats.inventory()
+            # doc 04 §4.2: the distinct counts are empty when the source
+            # partition does not state them — every bundle built before kgf
+            # 0.4.0. An absence the skill is written around is said, not blank.
+            distinct_counts = any(r.distinct_subjects is not None for r in rows)
+            approximations = [] if distinct_counts or not rows else [NO_DISTINCT_COUNTS]
             receipt = fetch_receipt(
                 step=step.step,
                 kind="inventory",
@@ -285,6 +298,7 @@ class Cli:
                 intent={"operation": "inventory", "view": "queryable", "reads": reads},
                 plan=None,
                 trace=t,
+                approximations=approximations,
             )
         columns = INVENTORY_COLUMNS
         records: list[dict[str, Any]] = [
@@ -297,12 +311,15 @@ class Cli:
                 "distinct_objects": r.distinct_objects,
                 "coverage": r.coverage,
                 "fanout": r.fanout,
+                "triples_per_entity": r.triples_per_entity,
                 "object_classes": " ".join(r.object_classes),
             }
             for r in rows
         ]
         table = pa.table({c: [rec[c] for rec in records] for c in columns})
-        step.receipt({k: receipt[k] for k in ("totals", "completeness", "grade")})
+        step.receipt({k: receipt[k] for k in ("totals", "completeness", "approximations", "grade")})
+        if not self.json and approximations:
+            self.out.write(f"note: {approximations[0]}\n\n")
         if a.out:
             info = write_output(self.workspace, a.out, table, receipt)
             step.output(
@@ -320,6 +337,8 @@ class Cli:
                 "grade": receipt["grade"],
                 "requests": receipt["totals"]["requests"],
                 "reads": reads,
+                "distinct_counts": distinct_counts,
+                "approximations": approximations,
                 "step": step.step,
                 "content_hash": info["content_hash"],
             }
@@ -334,6 +353,8 @@ class Cli:
                 "content_digest": rel.content_digest,
                 "view": "queryable",
                 "reads": reads,
+                "distinct_counts": distinct_counts,
+                "approximations": approximations,
                 "columns": columns,
                 "rows": records,
             },
@@ -347,6 +368,7 @@ class Cli:
                     rec["distinct_objects"],
                     _ratio(rec["coverage"], 3),
                     _ratio(rec["fanout"], 1),
+                    _ratio(rec["triples_per_entity"], 1),
                     rec["object_classes"],
                 ]
                 for rec in records
@@ -1311,6 +1333,11 @@ def main(argv: Sequence[str] | None = None, out=None, err=None) -> int:
     except (KgfqError, BadTermSyntax, WorkspaceError, TransportError, FileNotFoundError) as e:
         cli.err.write(f"kgfq: {e}\n")
         return 2
+    except BrokenPipeError:
+        # `kgfq … | head`: the reader stopped, which is not an error of ours
+        with contextlib.suppress(OSError):
+            cli.out.close()
+        return 0
     finally:
         cli.session.close()
 

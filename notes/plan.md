@@ -806,6 +806,16 @@ none. The JSON surface of sockg's inventory is 141,684 bytes with `indent=1`; th
 same rows as a tab-separated table with local names were 20,154 — the output
 format, not the table, is where the remaining size is, and `--out` plus any reader
 of Parquet is the answer rather than a second format.
+*2026-10-30:* the first remote run (climatemodelskg on FRINK) found every one of the
+47 bundles there publishing class-level partitions with `triples` only — built
+2026-09-05, before kgf-rs #19 (0.4.0, 2026-10-11) carried the distinct counts into
+class partitions; doc 04 §4.2 permits the absence. `inventory` had rendered it as
+four blank columns under a receipt saying complete. Now a release without the
+counts is named: one approximation in the receipt, `distinct_counts: false` in the
+handle, a `note:` line above the table, and a `triples_per_entity` column — the
+signal every release publishes — beside `coverage` and `fanout`. The skill says
+nothing about it: the tool says it when it applies, and stops when the bundles are
+rebuilt.
 
 ### C13. Verbalize
 
