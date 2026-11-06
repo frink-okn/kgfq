@@ -70,8 +70,19 @@ class Estimate:
 
 
 def canonical_pattern(pattern: Pattern) -> str:
-    """The cache key of a pattern: its bound positions in §3.3 syntax, sorted."""
+    """The cache key of a single count: its bound positions in §3.3 syntax,
+    sorted — all that a single ``/count`` sends."""
     return json.dumps(pattern.as_params(), sort_keys=True, separators=(",", ":"))
+
+
+def canonical_bindings(pattern: Pattern, vars_: Sequence[str]) -> str:
+    """The cache-key prefix of a per-binding count: the pattern as the bindings
+    body sends it, every position with its variable named, then the bound
+    variables in order (C3, 2026-11-06). Bound positions alone cannot tell
+    ``?c p ?g`` from ``?g p ?c`` under a ``?c`` file, and the server answers
+    the two differently."""
+    body = json.dumps(pattern.as_body(), sort_keys=True, separators=(",", ":"))
+    return body + "|" + ",".join(vars_) + "|"
 
 
 def _iri(obj: Any) -> str:
@@ -286,7 +297,7 @@ class Statistics:
         the server, in one batch. Bindings the pattern does not name are refused
         before the cache is read."""
         pattern.check_bindings(vars_)
-        base = canonical_pattern(pattern) + "|" + ",".join(vars_) + "|"
+        base = canonical_bindings(pattern, vars_)
         keys = [base + "\t".join(format_term(t) for t in row) for row in rows]
         cache = self._count_cache()
         missing = [i for i, k in enumerate(keys) if k not in cache]

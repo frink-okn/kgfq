@@ -482,6 +482,22 @@ send only the rows the cache has not seen. The planner reports the source of
 its count in the plan's evidence (`inventory:predicate`, `cache`, `server`), and
 `kgfq schema --all --children properties|classes` reads the cached inventory.
 
+*Fixed 2026-11-06 — a per-binding count is keyed by the request it stands for.* The
+key was the bound positions, the bound variables and the row. It never said which
+position a variable held, so `?c p ?g` and `?g p ?c` under one `?c` file shared an
+entry. On the fixture, the subject binding's 2 answered for the object binding, whose
+count is 0. The same gap let the dry run's mistaken call (C1, 2026-11-06) poison the
+corrected one: after the bare-`?` pattern with a `?paper` file had cached 513,685 per
+row, the same predicate with its subject named `?paper` read those entries back instead
+of its real count of 195. That run's `counts.jsonl` holds 891 of them among 906.
+`canonical_bindings` now keys on the pattern as the bindings body sends it, every
+position with its variable named. Entries under the old key are never read again,
+since the new key always spells all three positions. A single count keeps
+`canonical_pattern`, because a single `/count` sends only bound positions.
+*Verified by:* `tests/test_statistics.py`, where the subject and object bindings get
+their own counts and their own cache entries, and an entry planted under the old key
+is not read.
+
 ### C4. The strategy function
 
 Six rules drawn from plans written by hand and measured (implications §3), plus the

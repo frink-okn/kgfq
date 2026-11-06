@@ -1,5 +1,6 @@
 """C3: the statistics layer, cached per release, against live fixture servers."""
 
+import json
 from collections.abc import Iterator
 
 import pytest
@@ -127,6 +128,39 @@ def test_batch_counts_send_only_the_rows_the_cache_has_not_seen(stats, ep):
         counts = stats.count_bindings(pattern, ["c"], more)
     assert [c.value for c in counts] == [2, 2, 2, 2]
     assert t.requests == 1 and t.records[0].bindings == 1
+
+
+def test_a_batch_count_is_cached_by_the_position_each_variable_binds(stats, ep):
+    """2026-11-06: the per-binding key held bound positions only, so a `?c` file
+    bound at the subject answered for the same file bound at the object."""
+    one = [[Iri(f"{EX}chem/1")]]
+    as_object = Pattern(s=Var("g"), p=AFFECTS, o=Var("c"))
+    with ep.trace() as t:
+        subject_counts = stats.count_bindings(
+            Pattern(s=Var("c"), p=AFFECTS, o=Var("g")), ["c"], one
+        )
+        object_counts = stats.count_bindings(as_object, ["c"], one)
+    assert [c.value for c in subject_counts] == [2] and [c.value for c in object_counts] == [0]
+    assert t.requests == 2
+    fresh = Statistics(stats.workspace, ep, stats.release)
+    with ep.trace() as t:
+        assert fresh.count_bindings(as_object, ["c"], one) == object_counts
+    assert t.requests == 0, "each binding is still cached on disk, under its own key"
+
+
+def test_a_batch_count_under_the_old_key_is_not_read(stats, ep):
+    """An entry written under the old key, as the 2026-11-06 dry run left 891 of
+    them (the unbound count, 513,685, keyed as if `?paper` had bound the subject),
+    is never read: the new key names every position."""
+    old = '{"p":"<http://example.org/affects>"}|c|<http://example.org/chem/1>'
+    stats.dir.mkdir(parents=True, exist_ok=True)
+    (stats.dir / "counts.jsonl").write_text(
+        json.dumps({"key": old, "value": 24, "exact": True, "min": None}) + "\n"
+    )
+    pattern = Pattern(s=Var("c"), p=AFFECTS, o=Var("g"))
+    with ep.trace() as t:
+        counts = stats.count_bindings(pattern, ["c"], [[Iri(f"{EX}chem/1")]])
+    assert [c.value for c in counts] == [2] and t.requests == 1
 
 
 def test_plan_uses_the_inventory_for_r1(stats, ep):
