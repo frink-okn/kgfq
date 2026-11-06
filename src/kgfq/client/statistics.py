@@ -283,7 +283,9 @@ class Statistics:
         self, pattern: Pattern, vars_: Sequence[str], rows: Sequence[Sequence[Term]]
     ) -> list[Count]:
         """One count per row, in order; only rows the cache has not seen go to
-        the server, in one batch."""
+        the server, in one batch. Bindings the pattern does not name are refused
+        before the cache is read."""
+        pattern.check_bindings(vars_)
         base = canonical_pattern(pattern) + "|" + ",".join(vars_) + "|"
         keys = [base + "\t".join(format_term(t) for t in row) for row in rows]
         cache = self._count_cache()

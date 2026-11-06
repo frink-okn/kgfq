@@ -55,3 +55,9 @@ class TransportError(KgfqError):
 
 class CapabilityUnavailable(KgfqError):
     """A verified-capability check (D7) refused an operation before any request."""
+
+
+class UnboundBindings(KgfqError):
+    """Bindings name a variable the pattern does not (C1, 2026-11-06), refused
+    before any request: such a column binds nothing, so each row would answer
+    the whole pattern."""

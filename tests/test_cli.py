@@ -171,3 +171,27 @@ def test_console_script_runs():
         [sys.executable, "-m", "kgfq.cli", "--help"], capture_output=True, text=True, check=False
     )
     assert result.returncode == 0 and "fetch" in result.stdout
+
+
+def test_values_the_pattern_does_not_name_are_refused(ws, tmp_path):
+    """2026-11-06: a `?paper` header against a bare `?` subject bound nothing, so
+    `count` reported the whole predicate once per row and `fetch` fetched it once
+    per row. Now count, explain and fetch refuse it, and nothing is logged or written."""
+    values = tmp_path / "chems.tsv"
+    values.write_text("?chem\n<http://example.org/chem/1>\n<http://example.org/chem/2>\n")
+    for command in ("count", "explain", "fetch"):
+        _, err = run(
+            command, "chemkg", "? ex:affects ?g", "--values", str(values), workspace=ws, expect=2
+        )
+        assert err.startswith("kgfq: binding variable ?chem does not appear in the pattern")
+        assert "whose variables are ?g" in err
+        assert "`?chem <http://example.org/affects> ?g`" in err
+    both = tmp_path / "both.json"
+    both.write_text(json.dumps({"vars": ["?c", "?x"], "rows": [["ex:chem/1", '"a"']]}))
+    _, err = run(
+        "fetch", "chemkg", "?c ex:affects ?g", "--values", str(both), workspace=ws, expect=2
+    )
+    assert "?x does not appear" in err and "whose variables are ?c, ?g." in err
+    log, _ = run("log", workspace=ws)
+    assert log["steps"] == []
+    assert not (ws / "tables" / "affects.parquet").exists()

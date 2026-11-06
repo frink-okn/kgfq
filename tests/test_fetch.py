@@ -1,10 +1,12 @@
 import math
+import re
 from collections.abc import Iterator
 from contextlib import contextmanager
 
 import pytest
 
 from kgfq.client.endpoint import Endpoint, Pattern, RequestRecord
+from kgfq.client.errors import UnboundBindings
 from kgfq.client.statistics import Statistics
 from kgfq.client.terms import Iri, Var
 from kgfq.plan import execute_fetch, plan_fetch
@@ -257,3 +259,59 @@ def test_which_continued_truncations_leave_a_table_complete(reason, continued, c
     got = completeness(records)
     assert got["complete"] is complete and got["truncation_reasons"] == [reason]
     assert got["incomplete_because"] == ([] if complete else [reason])
+
+
+@pytest.mark.parametrize(
+    ("pattern", "vars_", "missing"),
+    [
+        # the 2026-11-06 stall: a bare `?` where the header's variable belonged
+        (Pattern(p=AFFECTS, o=Var("g")), ["c"], "?c"),
+        # the wire spells a bare `?` as `?s`; that is not a name the caller wrote
+        (Pattern(p=AFFECTS, o=Var("g")), ["s"], "?s"),
+        # partial overlap: the bind-join answered it, the local filter kept no row
+        (BOUND, ["c", "x"], "?x"),
+    ],
+)
+def test_bindings_the_pattern_does_not_name_are_refused_before_any_request(
+    ep, tmp_path, pattern, vars_, missing
+):
+    """Every door bindings come in by refuses them, before R1's count, before the
+    count cache is read, and before a chunk is sent (C1, 2026-11-06)."""
+    rel = ep.release("chemkg")
+    rows = [[Iri(f"{EX}chem/1"), *[Iri(f"{EX}x")] * (len(vars_) - 1)]]
+    stats = Statistics(Workspace(tmp_path), ep, rel)
+    doors = {
+        "plan_fetch": lambda: plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows),
+        "plan_fetch(stats)": lambda: plan_fetch(
+            ep, rel, pattern, vars_=vars_, rows=rows, stats=stats
+        ),
+        "Statistics.count_bindings": lambda: stats.count_bindings(pattern, vars_, rows),
+        "Endpoint.count_bindings": lambda: ep.count_bindings(rel, pattern, vars_, rows),
+        "Endpoint.bindings": lambda: ep.bindings(rel, pattern, vars_, rows),
+    }
+    with ep.trace() as t:
+        for door, call in doors.items():
+            with pytest.raises(UnboundBindings, match=re.escape(missing)):
+                call()
+                pytest.fail(f"{door} accepted {vars_} for {pattern.spelled()}")
+    assert t.requests == 0
+    assert not (stats.dir / "counts.jsonl").exists()
+
+
+def test_the_refusal_names_both_sides_and_the_pattern_to_write():
+    with pytest.raises(UnboundBindings) as e:
+        Pattern(p=AFFECTS, o=Var("ent")).check_bindings(["paper"])
+    assert str(e.value).startswith(
+        "binding variable ?paper does not appear in the pattern "
+        "`? <http://example.org/affects> ?ent`, whose variables are ?ent (a bare `?` is anonymous)."
+    )
+    assert "repeat it once per row" in str(e.value)
+    assert str(e.value).endswith("e.g. `?paper <http://example.org/affects> ?ent`.")
+    with pytest.raises(UnboundBindings) as e:
+        BOUND.check_bindings(["c", "x"])
+    assert "whose variables are ?c, ?g." in str(e.value) and "`binding` index" in str(e.value)
+    with pytest.raises(UnboundBindings, match="which names no variable"):
+        Pattern(s=Iri(f"{EX}chem/1"), p=AFFECTS, o=Iri(f"{EX}gene/G1")).check_bindings(["c"])
+    BOUND.check_bindings(["c"])
+    BOUND.check_bindings(["g", "c"])
+    BOUND.check_bindings([])

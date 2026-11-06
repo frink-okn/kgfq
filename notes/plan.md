@@ -398,6 +398,37 @@ resolve, and QUERY refused with 405 by the proxy falls back to POST and stays
 there for that origin. The live gateway passes QUERY through. §10 item 3's client
 half is therefore done.
 
+*Added 2026-11-06 — bindings name pattern variables.* The server joins a bindings
+block the way SPARQL joins `VALUES`. A column that shares no variable with the pattern
+binds nothing, and each row answers the whole pattern. In the pilot benchmark's
+Haiku dry run (`../kgf-pilot-benchmark`, `runs/dry-20261106/K/claude-haiku-5-5/
+climatemodelskg__v3_14`), an 891-row `?paper` file against
+`? <https://climatepub4kg.github.io/ontology#PAPER_MENTIONS> ?ent` gave a count of 457,693,335 (891 × 513,685, the
+unbound predicate). The matching fetch pulled the predicate once per row, and the
+harness killed the run after more than ten minutes. `Pattern.check_bindings` now
+refuses every binding variable the pattern does not name. It names the missing
+variables and the pattern's own, and suggests the pattern with the anonymous position
+named. It runs at every door: `plan_fetch` before R1's count (so `explain` and
+`fetch` refuse on either R2 route), `Statistics.count_bindings` before the cache is
+read, and `Endpoint.bindings`/`count_bindings` before a chunk is sent. A bare `?` is
+not a name, although the wire spells it `?s`/`?p`/`?o`; a `?s` header against
+`? p ?o` used to bind by that accident, and is refused with the rest.
+
+**Partial overlap is an error, not a defined case.** A `?c ?x` file against
+`?c ex:affects ?g` was well defined on the wire, where `?x` rides along unbound. It was
+not well defined in kgfq: on the fixture, the bind-join route returned six rows, two
+per row of input, repeating the rows that differ only in `?x`, while the
+column-fetch route looked `?x` up in each fetched triple, found nothing, and kept no
+row. The answer depended on R2's cost rule. Making the routes agree would mean
+carrying unbound columns through a table whose columns are fixed (C5, C6). Refusing
+loses nothing, because the `binding` column indexes the input rows and an extra
+column joins back in DuckDB. The likelier cause is a mistyped header, and one rule
+(every name in the file appears in the pattern) is one an agent learns from a
+single refusal. *Verified by:* `tests/test_fetch.py`, where every door refuses the
+dry run's shape, the wire-name case and a partial overlap, with no request and no
+cache entry; and `tests/test_cli.py`, where `count`, `explain` and `fetch` exit 2,
+with nothing logged and no table written.
+
 ### C2. Discovery and pinning
 
 A session is a set of graphs (D14). The workspace's endpoint list is seeded from the
@@ -1012,7 +1043,8 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 workspace table or a `.parquet`/`.csv`/`.json` path, `receipt`, `log`, `pins`. A
 pattern is one argument of three terms in doc 03 §3.3 syntax, `?` for an anonymous
 variable and `?name` for a named one; `--values` is JSON or a tab-separated file
-with a `?var` header; `--max-rows` records an R3 approximation in the receipt;
+with a `?var` header, each of whose variables the pattern must name (C1, 2026-11-06);
+`--max-rows` records an R3 approximation in the receipt;
 `--endpoint` overrides the workspace's list for one invocation.
 *Landed 2026-09-10*: `sparql` (§5.2) — `kgfq sparql <file.rq> [--dataset …]
 [--sparql-endpoint …] [--out name] [--max-requests N] [--max-bytes B] [--max-rows R]

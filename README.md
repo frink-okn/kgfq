@@ -33,7 +33,12 @@ uv run kgfq sparql query.rq --dataset prokn --out hits   # lint, then kgf-sparql
 A pattern is three terms in doc 03 §3.3 syntax — `<iri>`, `prefix:local` against the
 release's manifest prefixes, `"literal"@en` — with `?` for an anonymous variable and
 `?name` for a named one. `--values` takes a JSON `{"vars": [...], "rows": [[...]]}`
-document or a tab-separated file whose first line names the variables.
+document or a tab-separated file whose first line names the variables. Every
+variable it names must appear by name in the pattern: a `?paper` column binds
+`?paper <…> ?ent`, not `? <…> ?ent`. A column the pattern does not name would bind
+nothing, so every row would count or fetch the whole pattern. `count`, `explain` and
+`fetch` therefore refuse it with exit 2, naming both sides, before any request. A
+partial overlap is refused too (see the plan, C1).
 
 `kgfq lint` parses a query's algebra and names what its syntax hides — a finite set in a
 `FILTER`, a variable predicate scanned by name, a disconnected pattern that denotes a

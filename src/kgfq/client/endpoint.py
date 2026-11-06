@@ -32,7 +32,7 @@ from urllib.parse import urljoin
 import httpx
 
 from .. import __version__
-from .errors import KgfError, TransportError
+from .errors import KgfError, TransportError, UnboundBindings
 from .terms import Term, Var, format_term, term_from_json
 
 JSON = "application/json"
@@ -60,6 +60,68 @@ class Pattern:
             elif v is None:
                 out[pos] = pos
         return out
+
+    def named(self) -> list[str]:
+        """The variable names the caller wrote, in position order. A bare ``?``
+        names nothing, although the wire spells it ``?s``/``?p``/``?o``."""
+        return [v.name for v in (self.s, self.p, self.o) if isinstance(v, Var)]
+
+    def check_bindings(self, vars_: Sequence[str]) -> None:
+        """Refuse bindings that name a variable this pattern does not (C1,
+        2026-11-06). The server joins a bindings block the way SPARQL joins
+        ``VALUES``: a column that shares no variable with the pattern binds
+        nothing, and every row answers the whole pattern. Partial overlap is
+        refused too, since the two R2 routes answer it differently."""
+        named = self.named()
+        missing = list(dict.fromkeys(v for v in vars_ if v not in named))
+        if not missing:
+            return
+        positions = (("s", self.s), ("p", self.p), ("o", self.o))
+        anonymous = [pos for pos, v in positions if v is None]
+        example = None
+        if anonymous:
+            fill = dict(zip(anonymous, missing, strict=False))
+            s, p, o = (Var(fill[pos]) if pos in fill else v for pos, v in positions)
+            example = Pattern(s, p, o).spelled()
+        one = len(missing) == 1
+        has = (
+            "whose variables are " + ", ".join(f"?{n}" for n in named)
+            if named
+            else "which names no variable"
+        )
+        lines = [
+            f"binding {'variable' if one else 'variables'} "
+            f"{', '.join(f'?{v}' for v in missing)} {'does' if one else 'do'} not appear "
+            f"in the pattern `{self.spelled()}`, {has}"
+            + (" (a bare `?` is anonymous)." if anonymous else "."),
+        ]
+        if len(missing) == len(set(vars_)):
+            lines += [
+                "A binding variable the pattern does not name binds nothing: every row would "
+                "answer the whole pattern, and a count or fetch would repeat it once per row.",
+                f"Name the position it binds, e.g. `{example}`."
+                if example
+                else "Rename the column or the pattern variable so the two match.",
+            ]
+        else:
+            lines += [
+                "A column the pattern does not name binds nothing: rows that differ only "
+                "there would repeat, and a bind-join and a filtered fetch would disagree.",
+                "Leave it out and join it back on the table's `binding` index, "
+                + (
+                    f"or name the position it binds, e.g. `{example}`."
+                    if example
+                    else "or rename it to match a pattern variable."
+                ),
+            ]
+        raise UnboundBindings(" ".join(lines))
+
+    def spelled(self) -> str:
+        """The pattern as the caller writes it: ``?`` for an anonymous position."""
+        return " ".join(
+            "?" if v is None else str(v) if isinstance(v, Var) else format_term(v)
+            for v in (self.s, self.p, self.o)
+        )
 
     def as_params(self) -> dict[str, str]:
         return {pos: format_term(t) for pos, t in self.bound().items()}
@@ -593,7 +655,9 @@ class Endpoint:
         caller's variable names. Chunking and cross-page cursors are handled
         here; the server's chunk-relative ``binding`` never escapes. The read's
         last page is the final chunk's: a caller that stops after an earlier
-        chunk's last page has left the unsent chunks behind."""
+        chunk's last page has left the unsent chunks behind. Bindings that name
+        a variable the pattern does not are refused before any request."""
+        pattern.check_bindings(vars_)
         names = pattern.variables()
         template: dict[str, Any] = {
             "pattern": pattern.as_body(),
@@ -629,7 +693,9 @@ class Endpoint:
         vars_: Sequence[str],
         rows: Sequence[Sequence[Term]],
     ) -> list[Count]:
-        """``QUERY /count`` with bindings: one count per caller row, in order."""
+        """``QUERY /count`` with bindings: one count per caller row, in order.
+        Bindings that name a variable the pattern does not are refused first."""
+        pattern.check_bindings(vars_)
         template: dict[str, Any] = {"pattern": pattern.as_body()}
         out: list[Count | None] = [None] * len(rows)
         for offset, chunk in self._chunks(rows, vars_, template, "max_bindings"):

@@ -94,7 +94,11 @@ def plan_fetch(
 ) -> Plan:
     """R1: one `/count` sizes the pattern. R2: with k join keys and pattern
     cardinality c, bind-join costs ⌈k / max_bindings⌉ requests and column-fetch
-    ⌈c / max_limit⌉ — derived from the caps this endpoint publishes."""
+    ⌈c / max_limit⌉ — derived from the caps this endpoint publishes. Bindings
+    that name a variable the pattern does not are refused before R1's count,
+    whichever route R2 would take (C1, 2026-11-06)."""
+    if rows is not None:
+        pattern.check_bindings(vars_ or [])
     caps = {
         "max_limit": endpoint.cap("max_limit", 10000),
         "max_bindings": endpoint.cap("max_bindings", 200),
