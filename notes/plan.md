@@ -1018,7 +1018,7 @@ The actor suite rescues the pathological tail and leaves the median alone. Broad
 analytic SPARQL over fragments — `DISTINCT` over 1.68 M triples to find 75 values,
 grouped counts over whole relations — stays slow or infeasible through any fragment
 client, because the client must read the input (client-suite §5.1). Two responses,
-both outside this repository: a bounded **facets** operation on the server (§10), and
+both outside this repository: a bounded **distinct-values** operation on the server (§10), and
 doc 08 §8.4's **tier 2** — a SPARQL endpoint declared beside the bundle in the
 service descriptor's `services` block. `kgf-sparql` should be able to *route* to a
 declared tier-2 endpoint on request, never silently, with the receipt saying which
@@ -1038,6 +1038,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq schema <ds> [--class C \| --predicate P \| --projection …]` | drill | `/schema` |
 | `kgfq count <ds> <pattern> [--values file]` | verify | `/count`, batch form |
 | `kgfq sample <ds> <pattern> [-n]` | verify | `/sample` |
+| `kgfq distinct <ds> <pattern> --by s\|p\|o [--values file] [--top N]` | verify | `/distinct` (doc 03 §3.4.13) |
 | `kgfq resolve <text> [--datasets …] [--role label]` | situate | fan-out `/search` (C7) |
 | `kgfq fetch <ds> <pattern> [--values file] --out t.parquet\|.csv\|.json` | act | the strategy function over `/fragment` |
 | `kgfq hydrate <ds> --subjects file --properties p1,p2 --out …` | act | bindings per property today, `/star` when routed |
@@ -1066,6 +1067,28 @@ with a `?var` header, each of whose variables the pattern must name (C1, 2026-11
 [--sparql-endpoint …] [--out name] [--max-requests N] [--max-bytes B] [--max-rows R]
 [--timeout S] [--normalize] [--force]`; the handle names the contract, the table, the
 budget that ended an aborted run, the lint codes and the engine receipt's path.
+*Landed 2026-11-07*: `distinct` (§10 item 10), over `kgf-rs` unit 38. `Endpoint.distinct`
+follows every page of `GET /distinct`, including the empty pages a server's subject
+scan ends at its candidate budget. Under bindings it sends `QUERY /distinct` per
+chunk and merges the chunks' values by term, summing `count` and `bindings`, since
+chunks hold disjoint rows. Before any request it refuses four things:
+- a bound `--by` position;
+- bindings the pattern does not name (C1);
+- a repeated variable without `--values`, since GET has no variable names and would
+  drop the equality;
+- a release whose server publishes no `distinct` link (`CapabilityUnavailable`, D7).
+
+The body gives anonymous positions names no pattern variable has. `Pattern.as_body`
+names them `?s`/`?p`/`?o`, so `?o <p> ?` under bindings for `?o` became a self-join.
+That helper still does so for `fetch` and `count`, which is an open item. Paging
+refuses a page that says it is incomplete but carries no cursor, and a cursor that
+does not advance. An independent review of 2026-11-07 found these, and they are
+untested against a misbehaving server, since the tests use real ones.
+
+Every position of every pattern is answered. An earlier draft of the server operation,
+`/facet`, refused three shapes, and was withdrawn before review. Output goes to stdout
+only, as `count`'s does. A table of values with its own receipt would need a receipt
+shape for values, which is not decided.
 
 Conventions: JSON on stdout when not a TTY, tables when it is; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the
@@ -1246,9 +1269,11 @@ In the order the client blocks on them; most are already filed in
 9. **The "already closed" predicate declaration** in the dataset descriptor
    (doc 14 §14.4) — one field that removes the entire property-path burden of the
    research corpus.
-10. **A bounded facets operation** — pattern-scoped distinct values with counts
-    (client-suite §5.1). The one new server operation the client work argues for,
-    and the only answer to the blocking-`DISTINCT` class short of tier 2.
+10. ~~**A bounded facets operation**~~ — **specified and built** 2026-11-07 as
+    `/distinct`: doc 03 §3.4.13 (doc 07 §7.5 item 38), `kgf-rs` unit 38, and `kgfq
+    distinct` (§6). Pattern-scoped distinct values with counts (client-suite §5.1),
+    grouped by any one position, under bindings too. Grouping by the bound position is §5.5's semijoin,
+    keyed by value. Not yet deployed on `apps.okn.us`.
 11. ~~Publisher prose delimited as untrusted in the summary card~~ — **withdrawn**
     the same day: the card's bare description is deliberate, the prose is trusted
     (D6). Two small findings from the same probe are filed as kgf-rs #15 and #16:
@@ -1270,7 +1295,11 @@ To be raised against the design docs rather than settled here.
 3. **The plan, receipt, intent and log-record schemas** (D5, D12, C4, C9). Doc 06 §6.2.1 sketches a receipt's
    fields; if `kgfq`, the MCP server, and the server's access log are to join on it,
    the schema wants a normative home — doc 06 or a small doc of its own.
-4. **A facets operation** (§10 item 10) as a doc 03 candidate, with its cost row.
+4. ~~**A facets operation**~~ (§10 item 10) — **settled** 2026-11-07 as doc 03
+   §3.4.13's `/distinct`, with its §3.5 row: a live index walk over one pattern, one
+   grouped position, every shape answered.
+   Multi-pattern restrictions are out of scope; `xw-O2`'s two-hop cells are a build-time
+   normalization (doc 10 §10.4).
 5. **The closed-predicate declaration** (doc 14 §14.4) promoted into doc 04 §4.3
    beside `predicate_roles`, so C4 has something to read.
 6. **`User-Agent` convention** for KGF clients (D11), in doc 06.

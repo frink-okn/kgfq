@@ -32,7 +32,7 @@ from urllib.parse import urljoin
 import httpx
 
 from .. import __version__
-from .errors import KgfError, TransportError, UnboundBindings
+from .errors import CapabilityUnavailable, KgfError, KgfqError, TransportError, UnboundBindings
 from .terms import Term, Var, format_term, term_from_json
 
 JSON = "application/json"
@@ -173,6 +173,26 @@ class Count:
         if isinstance(obj, int):
             return cls(obj, True)
         return cls(int(obj["value"]), bool(obj.get("exact", True)), obj.get("min"))
+
+
+@dataclass(frozen=True, slots=True)
+class DistinctValue:
+    """One distinct value of a pattern position: the term, the triples holding
+    it, and under bindings how many input rows reached it."""
+
+    term: Term
+    count: int
+    bindings: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Distinct:
+    """Every distinct value of one position (doc 03 §3.4.13), read to the end,
+    and the triples matched."""
+
+    group_by: str
+    values: list[DistinctValue]
+    triples: int
 
 
 @dataclass(slots=True)
@@ -715,6 +735,122 @@ class Endpoint:
                 cursor = page.next
         return [c if c is not None else Count(0, True) for c in out]
 
+    # -- distinct values (doc 03 §3.4.13) ------------------------------------
+
+    def distinct(
+        self,
+        release: Release,
+        pattern: Pattern,
+        group_by: str,
+        *,
+        vars_: Sequence[str] | None = None,
+        rows: Sequence[Sequence[Term]] | None = None,
+        limit: int | None = None,
+    ) -> Distinct:
+        """The distinct values of one position of ``pattern``, with counts.
+
+        ``GET /distinct`` without bindings, every page followed; ``QUERY
+        /distinct`` per bindings chunk otherwise. Every page is followed,
+        including the empty ones a server's subject scan ends at its candidate
+        budget, so the answer is whole. The server merges the rows of one chunk;
+        a term reached from several chunks is merged here, its counts and its
+        ``bindings`` summed, since chunks hold disjoint rows. Values come back in
+        the server's index order within a chunk, and in first-seen order across
+        chunks — order carries no meaning (§3.4.13). A release whose server does
+        not route ``/distinct`` is refused before any request."""
+        if group_by not in ("s", "p", "o"):
+            raise KgfqError(f"group_by is a position, s, p or o, not {group_by!r}")
+        if group_by in pattern.bound():
+            raise KgfqError(
+                f"`{pattern.spelled()}` binds {group_by}, so it has one value there; "
+                "group by a variable position, or count it"
+            )
+        repeated = sorted({v for v in pattern.named() if pattern.named().count(v) > 1})
+        if repeated and rows is None:
+            # GET has no variable names, so `?x p ?x` would go out as `? p ?`
+            # and answer without the equality; refuse rather than drop it.
+            raise KgfqError(
+                f"`{pattern.spelled()}` repeats {', '.join('?' + v for v in repeated)}, an "
+                "equality the server can only apply when --values binds it in every row"
+            )
+        if "distinct" not in release.links:
+            raise CapabilityUnavailable(
+                f"{release.dataset}@{release.version} on {self.origin} publishes no `distinct` "
+                "link: its server predates doc 03 §3.4.13. Fetch the pattern and group it "
+                "with `kgfq sql` instead."
+            )
+        size = limit or self.cap("max_limit", 10000)
+        values: dict[str, DistinctValue] = {}
+        cardinality = 0
+
+        def follow(page: Response, previous: str | None) -> str | None:
+            """The cursor to send next, or ``None`` after the last page. A page
+            that says it is incomplete must carry a cursor, and the cursor must
+            move; anything else would end in a silent partial answer or a loop."""
+            if page.complete or not page.next:
+                if page.complete is False:
+                    raise KgfqError(
+                        f"{page.record.url}: an incomplete page without a cursor "
+                        f"({page.body.get('truncation_reason')})"
+                    )
+                return None
+            if page.next == previous:
+                raise KgfqError(f"{page.record.url}: the cursor did not advance")
+            page.record.continued = True
+            return page.next
+
+        def add(row: Mapping[str, Any], with_bindings: bool) -> None:
+            term = term_from_json(row[group_by])
+            key = format_term(term)
+            count = int(row["count"])
+            reached = int(row["bindings"]) if with_bindings else None
+            seen = values.get(key)
+            if seen is None:
+                values[key] = DistinctValue(term, count, reached)
+            else:
+                values[key] = DistinctValue(
+                    term,
+                    seen.count + count,
+                    None if reached is None else (seen.bindings or 0) + reached,
+                )
+
+        if rows is None:
+            params: dict[str, Any] = dict(pattern.as_params())
+            params.update({"group_by": group_by, "limit": size})
+            while True:
+                page = self.get(release.link("distinct"), params)
+                page.record.rows = len(page.body.get("rows", []))
+                for row in page.body.get("rows", []):
+                    add(row, False)
+                cursor = follow(page, params.get("cursor"))
+                if cursor is None:
+                    cardinality = Count.from_json(page.body["cardinality"]).value
+                    break
+                params["cursor"] = cursor
+            return Distinct(group_by, list(values.values()), cardinality)
+
+        pattern.check_bindings(vars_ or [])
+        template: dict[str, Any] = {
+            "pattern": _body_pattern(pattern),
+            "group_by": group_by,
+            "limit": size,
+        }
+        for _offset, chunk in self._chunks(rows, vars_ or [], template, "max_bindings"):
+            body = dict(template)
+            body["bindings"] = {"vars": [f"?{v}" for v in vars_ or []], "rows": chunk}
+            while True:
+                page = self.query(release.link("distinct"), body)
+                page.record.bindings = len(chunk)
+                page.record.rows = len(page.body.get("rows", []))
+                for row in page.body.get("rows", []):
+                    add(row, True)
+                cursor = follow(page, body.get("cursor"))
+                if cursor is None:
+                    cardinality += Count.from_json(page.body["cardinality"]).value
+                    break
+                body["cursor"] = cursor
+        return Distinct(group_by, list(values.values()), cardinality)
+
     def labels(self, release: Release, iris: Sequence[str]) -> dict[str, str | None]:
         """``QUERY /labels`` in batches of ``max_label_iris``; missing → ``None``."""
         out: dict[str, str | None] = {iri: None for iri in iris}
@@ -747,6 +883,23 @@ class Endpoint:
 
     def close(self) -> None:
         self._client.close()
+
+
+def _body_pattern(pattern: Pattern) -> dict[str, str]:
+    """The pattern as a body names it, with every anonymous position given a
+    name no variable of the pattern has. :meth:`Pattern.as_body` names one
+    ``?s``/``?p``/``?o``, which joins it to a variable the caller happened to
+    call ``o``: ``?o <p> ?`` would ask for values ``x`` with ``x <p> x``."""
+    taken = set(pattern.named())
+    body = pattern.as_body()
+    for pos, v in (("s", pattern.s), ("p", pattern.p), ("o", pattern.o)):
+        if v is None:
+            name = f"_kgfq_{pos}"
+            while name in taken:
+                name += "_"
+            taken.add(name)
+            body[pos] = f"?{name}"
+    return body
 
 
 def _rekey(row: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, Term]:
