@@ -27,6 +27,7 @@ from ..client.session import Session
 from ..client.statistics import Statistics
 from ..client.terms import (
     BadTermSyntax,
+    Iri,
     Term,
     Var,
     compact_iri,
@@ -299,6 +300,62 @@ class Cli:
             payload,
             table=[[format_term(r[n]) if n in r else "" for n in names] for r in rows],
             header=names,
+        )
+        return 0
+
+    def distinct(self) -> int:
+        """``kgfq distinct`` (doc 03 §3.4.13): the distinct values of one
+        position of a pattern, each with its triples — and under ``--values``
+        the input rows that reached it. Never reads the triples behind them."""
+        a = self.args
+        ep, rel = self.resolve(a.dataset)
+        pattern = self.pattern(ep, rel, a.pattern)
+        vars_, rows = self.values(ep, rel, a.values)
+        step = self.step(
+            "distinct",
+            dataset=a.dataset,
+            pattern=pattern.as_body(),
+            group_by=a.by,
+            values=a.values,
+        )
+        step.pin(_pin(ep, rel))
+        step.input_values(_bound_values(pattern))
+        if a.values:
+            step.input_file(Path(a.values))
+        with ep.trace() as t:
+            answer = ep.distinct(rel, pattern, a.by, vars_=vars_, rows=rows, limit=a.limit)
+        prefixes = self.prefixes(ep, rel)
+        values = answer.values
+        if a.top is not None:
+            values = sorted(values, key=lambda v: v.count, reverse=True)[: a.top]
+        payload: dict[str, Any] = {
+            "group_by": answer.group_by,
+            "distinct": len(answer.values),
+            "triples": answer.triples,
+            "rows": [
+                {
+                    "value": format_term(v.term),
+                    "count": v.count,
+                    **({} if v.bindings is None else {"bindings": v.bindings}),
+                }
+                for v in values
+            ],
+        }
+        if a.top is not None:
+            payload["top"] = a.top
+        step.receipt(
+            {"requests": t.requests, "request_ids": t.request_ids, "bytes_wire": t.bytes_wire}
+        )
+        step.output(distinct=len(answer.values), triples=answer.triples)
+        step.finish()
+        with_bindings = rows is not None
+        self.emit(
+            payload,
+            table=[
+                [_short(v.term, prefixes), v.count, *([v.bindings] if with_bindings else [])]
+                for v in values
+            ],
+            header=["value", "count", *(["bindings"] if with_bindings else [])],
         )
         return 0
 
@@ -706,6 +763,13 @@ def _pin(ep: Endpoint, rel: Release) -> dict[str, Any]:
     }
 
 
+def _short(term: Term, prefixes: dict[str, str]) -> str:
+    """A term for a terminal table: an IRI compacted where a prefix fits."""
+    if isinstance(term, Iri):
+        return compact_iri(term.value, prefixes)
+    return format_term(term)
+
+
 def _cell(v: Any) -> str:
     if v is None:
         return ""
@@ -898,6 +962,18 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "fetch":
             c.add_argument("--out", help="table name, or a .parquet/.csv/.json path")
             c.add_argument("--max-rows", type=int)
+
+    fc = sub.add_parser(
+        "distinct", help="the distinct values of one position of a pattern, with counts"
+    )
+    fc.add_argument("dataset")
+    fc.add_argument("pattern", help="three terms: `? fbi:OffenseUCRCode ?code`")
+    fc.add_argument("--by", required=True, choices=["s", "p", "o"], help="the grouped position")
+    fc.add_argument("--values", help="bindings file (JSON or tab-separated with a ?var header)")
+    fc.add_argument("--limit", type=int, help="groups per page (default: the server's max_limit)")
+    fc.add_argument(
+        "--top", type=int, help="print only the N largest values (all values are still read)"
+    )
 
     sm = sub.add_parser("sample", help="a seeded sample of a pattern")
     sm.add_argument("dataset")

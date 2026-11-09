@@ -23,6 +23,7 @@ uv run kgfq datasets                                  # every graph on every end
 uv run kgfq summary ubergraph                         # the summary card
 uv run kgfq count ubergraph '? rdfs:subClassOf ?'      # from the cached inventory, no request
 uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
+uv run kgfq distinct scales '? fbi:OffenseUCRCode ?code' --by o   # distinct values with counts; reads no triples
 uv run kgfq fetch phaseskg '? rdfs:label ?' --out labels   # tables/labels.parquet + receipt
 uv run kgfq receipt labels
 uv run kgfq log
@@ -36,9 +37,17 @@ release's manifest prefixes, `"literal"@en` — with `?` for an anonymous variab
 document or a tab-separated file whose first line names the variables. Every
 variable it names must appear by name in the pattern: a `?paper` column binds
 `?paper <…> ?ent`, not `? <…> ?ent`. A column the pattern does not name would bind
-nothing, so every row would count or fetch the whole pattern. `count`, `explain` and
-`fetch` therefore refuse it with exit 2, naming both sides, before any request. A
-partial overlap is refused too (see the plan, C1).
+nothing, so every row would count or fetch the whole pattern. `count`, `explain`,
+`fetch` and `distinct` therefore refuse it with exit 2, naming both sides, before any
+request. A partial overlap is refused too (see the plan, C1).
+
+`kgfq distinct` lists the distinct values one position of a pattern takes, each with
+its triples, through doc 03 §3.4.13's `/distinct`. The server walks its indexes, so the
+cost follows the number of values, not the triples behind them. `--by` names the
+position, and every position of every pattern is answered. With `--values` the values
+merge over every row, and each also says how many rows reached it. A server that
+predates the operation publishes no `distinct` link, and the command says so before any
+request.
 
 `kgfq lint` parses a query's algebra and names what its syntax hides — a finite set in a
 `FILTER`, a variable predicate scanned by name, a disconnected pattern that denotes a

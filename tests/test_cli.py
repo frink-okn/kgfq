@@ -195,3 +195,69 @@ def test_values_the_pattern_does_not_name_are_refused(ws, tmp_path):
     log, _ = run("log", workspace=ws)
     assert log["steps"] == []
     assert not (ws / "tables" / "affects.parquet").exists()
+
+
+def test_distinct_lists_values_with_counts(ws, tmp_path):
+    # `? ex:affects ?g` grouped by object: each gene with the chemicals'
+    # triples that reach it, summing to the pattern's count.
+    payload, _ = run("distinct", "chemkg", "? ex:affects ?g", "--by", "o", workspace=ws)
+    assert payload["group_by"] == "o" and payload["triples"] == 24
+    assert sum(r["count"] for r in payload["rows"]) == 24
+    assert payload["distinct"] == len(payload["rows"])
+    assert len({r["value"] for r in payload["rows"]}) == payload["distinct"]
+
+    # The same answer one value a page.
+    paged, _ = run(
+        "distinct", "chemkg", "? ex:affects ?g", "--by", "o", "--limit", "1", workspace=ws
+    )
+    assert paged["rows"] == payload["rows"]
+
+    # A predicate's subjects, the pair no permutation keeps contiguous: one
+    # row per chemical, with how many genes it affects.
+    subjects, _ = run("distinct", "chemkg", "?c ex:affects ?", "--by", "s", workspace=ws)
+    assert subjects["triples"] == 24 and sum(r["count"] for r in subjects["rows"]) == 24
+
+    # Under bindings: the predicates three chemicals use, and how many of the
+    # three reach each one.
+    values = tmp_path / "chems.tsv"
+    values.write_text("?c\n<http://example.org/chem/1>\n<http://example.org/chem/2>\nex:chem/3\n")
+    payload, _ = run(
+        "distinct", "chemkg", "?c ? ?", "--by", "p", "--values", str(values), workspace=ws
+    )
+    rows = {r["value"]: r for r in payload["rows"]}
+    affects = rows["<http://example.org/affects>"]
+    assert affects["count"] == 6 and affects["bindings"] == 3
+    assert payload["triples"] == sum(r["count"] for r in payload["rows"])
+
+    # --top prints the largest values and still reports the whole answer.
+    top, _ = run("distinct", "chemkg", "? ? ?", "--by", "p", "--top", "1", workspace=ws)
+    assert len(top["rows"]) == 1 and top["distinct"] > 1
+    assert top["rows"][0]["count"] == max(
+        r["count"] for r in run("distinct", "chemkg", "? ? ?", "--by", "p", workspace=ws)[0]["rows"]
+    )
+
+
+def test_distinct_refuses_a_bound_position_before_any_request(ws):
+    # A bound position has one value; refused here, before any request.
+    _, err = run("distinct", "chemkg", "? ex:affects ?", "--by", "p", workspace=ws, expect=2)
+    assert "binds p" in err
+
+
+def test_distinct_refuses_an_equality_get_cannot_carry(ws):
+    # `?c ex:affects ?c` over GET would lose the equality; refused before any
+    # request rather than answered as `? ex:affects ?`.
+    _, err = run("distinct", "chemkg", "?c ex:affects ?c", "--by", "s", workspace=ws, expect=2)
+    assert "repeats ?c" in err
+
+
+def test_an_anonymous_position_does_not_join_a_variable_named_like_it(ws, tmp_path):
+    # The caller's `?o` binds the subject. The anonymous object must stay
+    # independent of it, not become `?o` too and ask for chemicals that affect
+    # themselves.
+    values = tmp_path / "chems.tsv"
+    values.write_text("?o\n<http://example.org/chem/1>\n<http://example.org/chem/2>\n")
+    payload, _ = run(
+        "distinct", "chemkg", "?o ex:affects ?", "--by", "o", "--values", str(values), workspace=ws
+    )
+    assert payload["triples"] == 4
+    assert sum(r["count"] for r in payload["rows"]) == 4

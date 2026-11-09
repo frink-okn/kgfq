@@ -350,6 +350,18 @@ The first version should remain deliberately narrower than SPARQL aggregation:
 This supports SCALES, property-value exploration, faceting, and heavy-hitter discovery
 without introducing a general server-side join engine.
 
+*Specified 2026-11-07* as `../kgf` doc 03 §3.4.13, under the name `/distinct`. It
+follows this section's first version:
+- one pattern;
+- `group_by` one position, any position of any pattern;
+- `count` per value, and under bindings the number of input rows reaching each value;
+- exact distinct cardinality where an index or the bundle's statistics state it;
+- ordinary paging, cursors, byte caps and completeness.
+
+`countDistinct` is not offered. With the third position bound it equals `count`, and
+otherwise it needs a set per value. Ordering is by index id, not by count, because top-k
+would examine every group. It is built in `kgf-rs` and in `kgfq distinct`.
+
 ### 5.2 Class-conditioned property statistics
 
 Extend each `(class, predicate)` record in the queryable schema projection with:
@@ -408,6 +420,11 @@ input bindings + triple pattern -> compatible input binding identities
 This prevents transfer of repeated triples when the client only needs to filter its current
 bindings. It may be a client-library abstraction over binding-aware `/count`, rather than a
 new HTTP route.
+
+*2026-11-07:* both forms exist without a new route. Per-binding `/count` gives the
+semijoin keyed by row index, and dense. `/distinct` grouped by the bound position gives it
+keyed by value, and sparse (doc 03 §3.4.13). A restriction by a second *pattern*, rather
+than by client-held bindings, stays out of scope, because it is a server-side join.
 
 ### 5.6 Large-scan transport instead of general server aggregation
 
