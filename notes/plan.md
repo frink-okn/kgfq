@@ -708,6 +708,29 @@ pattern over the `.nt` the bundle was built from: equal, one line a row. An IRI 
 N-Triples' `IRIREF` cannot hold (a space, a brace) is written with `\uXXXX`, so a graph's
 malformed IRI is still one parseable line.
 
+*Changed 2026-11-20 — a receipt is a shared core and the operation's detail*
+(`notes/session-format.md` §5; `kgf.receipt/1.0`, `docs/session/receipt.schema.json`,
+which replaces `docs/receipt.schema.json`). `core` is what any client reads the same way:
+kind, step, grade, sources, the table (name, shape, pattern, columns, rows, content hash),
+completeness, totals, requests, approximations, inputs. `detail` is the operation's own:
+`fetch` keeps its intent and plan there, `sparql` its query, lint and normalization record,
+outcome, budget, engine, `requests_by_shape` and the pointer to the engine's receipt. A
+client that does not implement the operation keeps the detail as it came. Decided while
+building:
+- A bundle read has `sources`, a list of one, where it had `source`: a step that reads two
+  graphs on two servers names both (D14), and one field does for every kind.
+- The schema closes only the major version. `kgf.receipt/1.7` with fields kgfq has never
+  seen validates, loads, classifies and exports (`tests/test_session_format.py`); `2.0`
+  does not validate.
+- The footer is a table's receipt of record, under `kgf.receipt`: `read_receipt` reads it,
+  and a sidecar only where there is no table. It had preferred the sidecar, which can be
+  edited apart from the rows and which a session another client wrote need not have. The
+  sidecar is still written, for `cat` and `jq`, and is all a step without a table leaves.
+- A `sparql` receipt's core has no request list; the list is the engine receipt's, as
+  decided 2026-09-10. `totals.schema_requests` moved to `detail.statistics`, where the
+  engine reports it.
+- `jsonschema` is a development dependency: every receipt the tests write is validated.
+
 *Changed 2026-11-20 — the content hash is specified.* It was SHA-256 over each row as
 compact JSON, the rows sorted as Python strings: defined by this implementation, and not
 reproducible in JavaScript, which orders strings by UTF-16 unit and spells JSON escapes and

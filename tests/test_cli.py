@@ -88,14 +88,16 @@ def test_count_and_fetch_with_values_file(ws, tmp_path):
     ]
     assert handle["grade"] == "bundle" and handle["complete"] is True
     receipt, _ = run("receipt", "affects3", workspace=ws)
-    assert receipt["inputs"][str(values)]["kind"] == "external"
-    assert receipt["plan"]["steps"][-1]["op"] == "bindings"
-    assert receipt["shape"] == "bindings" and receipt["pattern"] == {
+    assert receipt["core"]["inputs"][str(values)]["kind"] == "external"
+    assert receipt["detail"]["plan"]["steps"][-1]["op"] == "bindings"
+    assert receipt["core"]["shape"] == "bindings" and receipt["core"]["pattern"] == {
         "s": "?c",
         "p": "<http://example.org/affects>",
         "o": "?g",
     }
-    assert receipt["totals"]["requests"] >= 1 and all(r["request_id"] for r in receipt["requests"])
+    assert receipt["core"]["totals"]["requests"] >= 1 and all(
+        r["request_id"] for r in receipt["core"]["requests"]
+    )
 
 
 def test_fetch_max_rows_is_an_approximation_only_when_rows_remained(ws):
@@ -105,8 +107,8 @@ def test_fetch_max_rows_is_an_approximation_only_when_rows_remained(ws):
     assert handle["rows"] == 5 and handle["complete"] is False
     assert "--max-rows 5" in handle["approximations"][0]
     receipt, _ = run("receipt", "few", workspace=ws)
-    assert receipt["schema"] == "kgfq.receipt/4"
-    assert receipt["completeness"]["incomplete_because"] == ["max_rows"]
+    assert receipt["schema"] == "kgf.receipt/1.0"
+    assert receipt["core"]["completeness"]["incomplete_because"] == ["max_rows"]
     handle, _ = run(
         "fetch", "chemkg", "?c ex:affects ?g", "--max-rows", "24", "--out", "all", workspace=ws
     )
@@ -292,7 +294,11 @@ def test_a_fetched_tables_columns_are_the_patterns_variables(ws, tmp_path):
     assert set(table["chem_kind"].to_pylist()) == {"iri"} == set(table["o_kind"].to_pylist())
     assert all("/chem/" in c for c in table["chem"].to_pylist())
     receipt, _ = run("receipt", "named", workspace=ws)
-    assert receipt["pattern"] == {"s": "?chem", "p": "<http://example.org/affects>", "o": "?o"}
+    assert receipt["core"]["pattern"] == {
+        "s": "?chem",
+        "p": "<http://example.org/affects>",
+        "o": "?o",
+    }
     # Every column needs a name of its own, and it is the caller's to choose.
     for pattern, said in (
         ("?o ex:affects ?", "leaves its object unnamed, and that column would be `o`"),

@@ -48,15 +48,15 @@ def classify_values(ws: Workspace, values: Iterable[str]) -> dict[str, dict[str,
         ]
         if not cols:
             continue
-        receipt = ws.read_receipt(name)
+        core = ws.read_receipt(name)["core"]
         for c in cols:
             present = set(table.column(c).unique().to_pylist()) & remaining
             for v in present:
                 out[v] = {
                     "kind": "derived",
                     "table": name,
-                    "step": receipt.get("step"),
-                    "grade": receipt.get("grade"),
+                    "step": core.get("step"),
+                    "grade": core.get("grade"),
                 }
             remaining -= present
     return out
@@ -67,12 +67,12 @@ def classify_file(ws: Workspace, path: Path) -> dict[str, Any]:
     anything else is external, identified by content hash."""
     path = Path(path)
     if path.suffix == ".parquet" and path.resolve().parent == ws.tables_dir.resolve():
-        receipt = ws.read_receipt(path.stem)
+        core = ws.read_receipt(path.stem)["core"]
         return {
             "kind": "derived",
             "table": path.stem,
-            "step": receipt.get("step"),
-            "grade": receipt.get("grade"),
+            "step": core.get("step"),
+            "grade": core.get("grade"),
         }
     h = hashlib.sha256()
     with open(path, "rb") as f:

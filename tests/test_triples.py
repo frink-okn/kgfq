@@ -100,21 +100,19 @@ def cells(rows):
 
 def test_a_triples_table_is_its_own_answer_and_other_shapes_have_none():
     table = cells([["http://x/a"], ["http://x/p"], ["v"], ["literal"], [None], [None]])
-    assert triples(table, {"shape": "triples"}).equals(table)
+    assert triples(table, {"core": {"shape": "triples"}}).equals(table)
     select = pa.table(
         {"a": ["http://x/a"], "a_kind": ["iri"], "a_lang": [None], "a_datatype": [None]}
     )
-    for receipt in (
+    for core in (
         {"shape": "bindings", "pattern": None, "kind": "sparql", "table": "hits"},
         {"kind": "derived", "table": "hits"},
     ):
         with pytest.raises(WorkspaceError, match="hits answers no single pattern"):
-            triples(select, receipt)
+            triples(select, {"core": core})
     with pytest.raises(WorkspaceError, match=r"names \?b, and it has no column b, b_kind"):
-        triples(
-            select,
-            {"shape": "bindings", "pattern": {"s": "?a", "p": "<http://x/p>", "o": "?b"}},
-        )
+        pattern = {"s": "?a", "p": "<http://x/p>", "o": "?b"}
+        triples(select, {"core": {"shape": "bindings", "pattern": pattern}})
 
 
 def test_ntriples_spells_every_kind_of_term():

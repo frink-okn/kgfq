@@ -4,8 +4,8 @@
 <workspace>/
   .kgfq/              session state: endpoints, pins, caches, scratch — disposable
   kgfq.log.jsonl      one record per library operation, append-only
-  tables/*.parquet    evidence; each with a *.receipt.json sidecar and the same
-                      receipt in the Parquet footer under ``kgfq.receipt``
+  tables/*.parquet    evidence; each with its receipt in the Parquet footer under
+                      ``kgf.receipt``, and a copy beside it as *.receipt.json
 ```
 
 Files rather than a database: no writer lock between parallel invocations, a
@@ -28,7 +28,7 @@ from typing import Any
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-RECEIPT_KEY = b"kgfq.receipt"
+RECEIPT_KEY = b"kgf.receipt"
 # The first bytes hashed, so a hash names the encoding it was made with.
 HASH_PREAMBLE = b"kgf.table-hash/1\n"
 TABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
@@ -170,35 +170,26 @@ class Workspace:
             return []
         return sorted(p.stem for p in self.tables_dir.glob("*.parquet"))
 
-    def write_table(self, name: str, table: pa.Table, receipt: dict[str, Any]) -> TableInfo:
+    def write_table(self, name: str, table: pa.Table, receipt: Mapping[str, Any]) -> TableInfo:
         """Write ``tables/<name>.parquet`` with the receipt in the footer and a
-        sidecar; the receipt gains the table's rows, columns and content hash."""
+        sidecar; the receipt's core gains the table's name, rows, columns and
+        content hash."""
         self.check_name(name)
         self.tables_dir.mkdir(parents=True, exist_ok=True)
-        content_hash = self.content_hash(table)
-        receipt = dict(receipt)
-        receipt.update(
-            {
-                "table": name,
-                "rows": table.num_rows,
-                "columns": table.column_names,
-                "content_hash": content_hash,
-            }
-        )
-        payload = json.dumps(receipt, sort_keys=True).encode()
-        meta = dict(table.schema.metadata or {})
-        meta[RECEIPT_KEY] = payload
-        table = table.replace_schema_metadata(meta)
         path = self.table_path(name)
         tmp = path.with_suffix(f".{os.getpid()}.tmp")
-        pq.write_table(table, tmp, compression="zstd")
+        filed = write_parquet(tmp, table, receipt, name=name)
         os.replace(tmp, path)
-        self.write_receipt(name, receipt)
-        return TableInfo(name, path, table.num_rows, table.column_names, content_hash, receipt)
+        self.write_receipt(name, filed)
+        return TableInfo(
+            name, path, table.num_rows, table.column_names, filed["core"]["content_hash"], filed
+        )
 
-    def write_receipt(self, name: str, receipt: dict[str, Any]) -> Path:
-        """The sidecar alone: for a table, and for a step that produced none —
-        a run aborted at a budget is a finding with a receipt (D2) and no table."""
+    def write_receipt(self, name: str, receipt: Mapping[str, Any]) -> Path:
+        """The sidecar: a copy for ``cat`` and ``jq`` beside a table, whose
+        footer is the receipt of record, and the only file a step that produced
+        no table leaves — a run aborted at a budget is a finding with a receipt
+        (D2)."""
         self.tables_dir.mkdir(parents=True, exist_ok=True)
         path = self.receipt_path(name)
         path.write_text(json.dumps(receipt, indent=1, sort_keys=True) + "\n")
@@ -216,13 +207,19 @@ class Workspace:
         return pq.read_table(self.table_path(name), columns=columns)
 
     def read_receipt(self, name: str) -> dict[str, Any]:
+        """A table's receipt from its footer, which cannot be parted from the
+        rows; the sidecar only where there is no table (2026-11-20). A sidecar
+        beside a table is a copy, and a session another client wrote need not
+        have one."""
+        if self.has_table(name):
+            meta = pq.read_schema(self.table_path(name)).metadata or {}
+            if RECEIPT_KEY in meta:
+                return json.loads(meta[RECEIPT_KEY])
+            raise WorkspaceError(f"table {name!r} carries no receipt in its footer")
         sidecar = self.receipt_path(name)
         if sidecar.exists():
             return json.loads(sidecar.read_text())
-        meta = pq.read_schema(self.table_path(name)).metadata or {}
-        if RECEIPT_KEY in meta:
-            return json.loads(meta[RECEIPT_KEY])
-        raise WorkspaceError(f"table {name!r} carries no receipt")
+        raise WorkspaceError(f"no table or receipt named {name!r}")
 
     @staticmethod
     def content_hash(table: pa.Table) -> str:
@@ -308,6 +305,39 @@ class TableHash:
 
 
 _MASK_256 = (1 << 256) - 1
+
+
+def stamped(
+    receipt: Mapping[str, Any], *, table: str, rows: int, columns: list[str], content_hash: str
+) -> dict[str, Any]:
+    """The receipt with its table described in the core, as it is filed."""
+    core = {
+        **receipt["core"],
+        "table": table,
+        "rows": rows,
+        "columns": list(columns),
+        "content_hash": content_hash,
+    }
+    return {**receipt, "core": core}
+
+
+def write_parquet(
+    path: Path, table: pa.Table, receipt: Mapping[str, Any], *, name: str
+) -> dict[str, Any]:
+    """Write ``table`` to ``path`` with its receipt in the footer under
+    :data:`RECEIPT_KEY`, and return the receipt as filed: its core describing
+    the table it now travels with."""
+    filed = stamped(
+        receipt,
+        table=name,
+        rows=table.num_rows,
+        columns=table.column_names,
+        content_hash=Workspace.content_hash(table),
+    )
+    meta = dict(table.schema.metadata or {})
+    meta[RECEIPT_KEY] = json.dumps(filed, sort_keys=True).encode()
+    pq.write_table(table.replace_schema_metadata(meta), path, compression="zstd")
+    return filed
 
 
 def _cell_bytes(v: Any) -> bytes:

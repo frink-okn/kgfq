@@ -72,8 +72,10 @@ uv run pytest
   shaped the way it is, in the plan's own terse register.
 - Match the existing voice in `notes/` and `docs/`: short declaratives, cross-refs
   to doc and section numbers, measurements over adjectives.
-- JSON schemas for plan, receipt, and log record live in `docs/`; change the schema
-  and its `schema` version string together.
+- JSON schemas for plan and log record live in `docs/`; the receipt's, shared with
+  `../kgf-explorer`, in `docs/session/`. Change a schema and its `schema` version
+  string together. In the shared format an added field is a minor version and
+  nothing but the major is closed: readers ignore what they do not know.
 
 ## Neighbours
 

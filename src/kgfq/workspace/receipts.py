@@ -1,4 +1,9 @@
-"""Receipts (plan C6, D5, D17): what makes an approximate answer a finding."""
+"""Receipts (plan C6, D5, D17): what makes an approximate answer a finding.
+
+A receipt is a shared ``core`` and a per-operation ``detail`` (2026-11-20,
+``notes/session-format.md`` §5), so a client that has never heard of the
+operation still reads the grade, the sources, the completeness and the table.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +13,7 @@ from typing import Any
 
 from ..client.endpoint import Release, RequestRecord, Trace
 
-RECEIPT_SCHEMA = "kgfq.receipt/4"
+RECEIPT_SCHEMA = "kgf.receipt/1.0"
 
 # The truncations a followed cursor repairs: doc 03 §3.6 promises every cursor
 # resumes with no loss and no duplication, budget interruptions included. Only
@@ -20,6 +25,7 @@ CONTINUABLE = frozenset({"page_limit", "time_budget", "response_bytes"})
 
 def source_of(release: Release) -> dict[str, Any]:
     return {
+        "kind": "kgf",
         "grade": "bundle",
         "origin": release.origin,
         "dataset": release.dataset,
@@ -27,6 +33,47 @@ def source_of(release: Release) -> dict[str, Any]:
         "version": release.version,
         "content_digest": release.content_digest,
     }
+
+
+def new_receipt(
+    *,
+    kind: str,
+    step: int | None,
+    grade: str,
+    sources: Iterable[Mapping[str, Any]],
+    completeness: Mapping[str, Any],
+    totals: Mapping[str, Any],
+    requests: Iterable[Mapping[str, Any]] | None = None,
+    shape: str | None = None,
+    pattern: Mapping[str, str] | None = None,
+    approximations: Iterable[str] = (),
+    inputs: Mapping[str, Any] | None = None,
+    detail: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A receipt in the shared layout (``notes/session-format.md`` §5,
+    ``docs/session/receipt.schema.json``): a ``core`` every client reads the
+    same way, and the ``detail`` only a client that implements ``kind`` reads.
+    Another client's detail is kept as it came and never interpreted.
+
+    ``requests`` is left out where the list lives elsewhere, as a SPARQL run's
+    does in the engine's own receipt. The table's name, rows, columns and
+    content hash join the core when it is filed (``kgfq.workspace.store``)."""
+    core: dict[str, Any] = {
+        "kind": kind,
+        "step": step,
+        "grade": grade,
+        "sources": [dict(s) for s in sources],
+        "shape": shape,
+        "pattern": dict(pattern) if pattern else None,
+        "completeness": dict(completeness),
+        "totals": dict(totals),
+        "approximations": list(approximations),
+        "inputs": dict(inputs or {}),
+        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    if requests is not None:
+        core["requests"] = [dict(r) for r in requests]
+    return {"schema": RECEIPT_SCHEMA, "core": core, "detail": dict(detail or {})}
 
 
 def request_entries(records: Iterable[RequestRecord]) -> list[dict[str, Any]]:
@@ -88,42 +135,43 @@ def fetch_receipt(
     """The receipt of a table read from one release. Its ``shape`` is
     ``bindings``; ``pattern`` is the one pattern the table answers, each
     position a term or the ``?variable`` whose column holds it, which is what
-    turns a row back into its triple."""
+    turns a row back into its triple. The intent and the plan (D12) are this
+    client's detail."""
     records = trace.records
-    return {
-        "schema": RECEIPT_SCHEMA,
-        "kind": kind,
-        "step": step,
-        "grade": "bundle",
-        "source": source_of(release),
-        "shape": "bindings",
-        "pattern": dict(pattern) if pattern else None,
-        "intent": dict(intent),
-        "plan": dict(plan) if plan else None,
-        "requests": request_entries(records),
-        "totals": {
+    return new_receipt(
+        kind=kind,
+        step=step,
+        grade="bundle",
+        sources=[source_of(release)],
+        shape="bindings",
+        pattern=pattern,
+        requests=request_entries(records),
+        totals={
             "requests": len(records),
+            "bindings_requests": sum(1 for r in records if r.bindings is not None),
             "bytes_wire": sum(r.bytes_wire for r in records),
             "bytes_decoded": sum(r.bytes_decoded for r in records),
             "elapsed_ms": round(sum(r.elapsed_ms for r in records), 3),
         },
-        "completeness": completeness(records),
-        "approximations": list(approximations),
-        "inputs": dict(inputs or {}),
-        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
+        completeness=completeness(records),
+        approximations=approximations,
+        inputs=inputs,
+        detail={"intent": dict(intent), "plan": dict(plan) if plan else None},
+    )
 
 
 def derived_receipt(
     *, step: int | None, statement: str, inputs: Mapping[str, Mapping[str, Any]], grade: str
 ) -> dict[str, Any]:
-    """A table produced by SQL over workspace tables: one hop of derivation."""
-    return {
-        "schema": RECEIPT_SCHEMA,
-        "kind": "derived",
-        "step": step,
-        "grade": grade,
-        "statement": statement,
-        "inputs": {name: dict(r) for name, r in inputs.items()},
-        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
+    """A table produced by SQL over workspace tables: one hop of derivation.
+    Nothing was requested, so nothing was left behind."""
+    return new_receipt(
+        kind="derived",
+        step=step,
+        grade=grade,
+        sources=[],
+        completeness={"complete": True, "incomplete_because": []},
+        totals={"requests": 0, "bindings_requests": 0, "bytes_decoded": 0, "elapsed_ms": 0.0},
+        inputs={name: dict(r) for name, r in inputs.items()},
+        detail={"statement": statement},
+    )

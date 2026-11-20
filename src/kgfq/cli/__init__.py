@@ -13,12 +13,11 @@ import dataclasses
 import hashlib
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from .. import __version__
 from ..client.endpoint import Endpoint, Pattern, Release
@@ -49,7 +48,7 @@ from ..sparql import (
 )
 from ..workspace.log import Step
 from ..workspace.receipts import fetch_receipt
-from ..workspace.store import Workspace, WorkspaceError
+from ..workspace.store import Workspace, WorkspaceError, stamped, write_parquet
 from ..workspace.triples import triples, write_ntriples
 
 DEFAULT_PREFIXES = {
@@ -410,7 +409,8 @@ class Cli:
             )
         step.plan(plan.as_dict())
         info = write_output(self.workspace, out, table, receipt)
-        step.receipt({k: receipt[k] for k in ("totals", "completeness", "approximations", "grade")})
+        core = receipt["core"]
+        step.receipt({k: core[k] for k in ("totals", "completeness", "approximations", "grade")})
         step.output(
             table=info["table"],
             path=info["path"],
@@ -423,10 +423,10 @@ class Cli:
             "path": info["path"],
             "rows": table.num_rows,
             "columns": table.column_names,
-            "grade": receipt["grade"],
-            "requests": receipt["totals"]["requests"],
-            "bytes_wire": receipt["totals"]["bytes_wire"],
-            "complete": receipt["completeness"]["complete"],
+            "grade": core["grade"],
+            "requests": core["totals"]["requests"],
+            "bytes_wire": core["totals"]["bytes_wire"],
+            "complete": core["completeness"]["complete"],
             "approximations": approximations,
             "step": step.step,
             "content_hash": info["content_hash"],
@@ -631,14 +631,15 @@ class Cli:
             approximations=approximations,
             shape=shape,
         )
+        core, detail = receipt["core"], receipt["detail"]
         if read_error:
             contract = "error"
-            receipt["outcome"] = {**receipt["outcome"], "contract": "error", "error": read_error}
-            receipt["completeness"].update(complete=False, incomplete_because=["error"])
-        error = receipt["outcome"].get("error") if contract == "error" else None
+            detail["outcome"] = {**detail["outcome"], "contract": "error", "error": read_error}
+            core["completeness"].update(complete=False, incomplete_because=["error"])
+        error = detail["outcome"].get("error") if contract == "error" else None
         if table is not None:
             info = self.workspace.write_table(out, table, receipt)
-            receipt = info.receipt
+            core = info.receipt["core"]
             step.output(
                 table=info.name,
                 path=str(info.path),
@@ -651,7 +652,7 @@ class Cli:
             self.workspace.write_receipt(out, receipt)
             produced: dict[str, Any] = {
                 "contract": contract,
-                "rows": receipt["outcome"].get("rows", 0),
+                "rows": detail["outcome"].get("rows", 0),
             }
             if boolean is not None:
                 produced["boolean"] = boolean
@@ -662,18 +663,8 @@ class Cli:
             step.output(**produced)
         step.receipt(
             {
-                **{
-                    k: receipt[k]
-                    for k in (
-                        "grade",
-                        "outcome",
-                        "totals",
-                        "budget",
-                        "completeness",
-                        "approximations",
-                        "engine_receipt",
-                    )
-                },
+                **{k: core[k] for k in ("grade", "totals", "completeness", "approximations")},
+                **{k: detail[k] for k in ("outcome", "budget", "engine_receipt")},
                 "lint": [d.code for d in diagnostics],
                 "normalizations": [n["rule"] for n in normalizations if n["applied"]],
             }
@@ -685,22 +676,22 @@ class Cli:
             "contract": contract,
             "table": out if table is not None else None,
             "path": str(self.workspace.table_path(out)) if table is not None else None,
-            "rows": table.num_rows if table is not None else receipt["outcome"].get("rows", 0),
+            "rows": table.num_rows if table is not None else detail["outcome"].get("rows", 0),
             "columns": table.column_names if table is not None else None,
             "boolean": boolean,
-            "grade": receipt["grade"],
+            "grade": core["grade"],
             "budget": budget_name,
-            "requests": receipt["totals"]["requests"],
-            "bindings_requests": receipt["totals"]["bindings_requests"],
-            "bytes_decoded": receipt["totals"]["bytes_decoded"],
-            "elapsed_ms": receipt["totals"]["elapsed_ms"],
+            "requests": core["totals"]["requests"],
+            "bindings_requests": core["totals"]["bindings_requests"],
+            "bytes_decoded": core["totals"]["bytes_decoded"],
+            "elapsed_ms": core["totals"]["elapsed_ms"],
             "lint": [d.code for d in diagnostics],
             "normalizations": normalizations,
             "approximations": approximations,
             "engine_receipt": pointer["path"] if pointer else None,
             "receipt": str(self.workspace.receipt_path(out)),
             "step": step.step,
-            "content_hash": receipt.get("content_hash"),
+            "content_hash": core.get("content_hash"),
             "error": error,
         }
         if not self.json and diagnostics:
@@ -886,7 +877,7 @@ def _term(text: str, prefixes: dict[str, str]) -> Term:
 
 
 def write_output(
-    ws: Workspace, out: str, table: pa.Table, receipt: dict[str, Any]
+    ws: Workspace, out: str, table: pa.Table, receipt: Mapping[str, Any]
 ) -> dict[str, Any]:
     """``--out name`` writes ``tables/name.parquet`` in the workspace; a path
     ending in .parquet/.csv/.json writes there, with the receipt beside it."""
@@ -896,17 +887,15 @@ def write_output(
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
     content_hash = ws.content_hash(table)
-    receipt = {
-        **receipt,
-        "table": path.stem,
-        "rows": table.num_rows,
-        "columns": table.column_names,
-        "content_hash": content_hash,
-    }
+    receipt = stamped(
+        receipt,
+        table=path.stem,
+        rows=table.num_rows,
+        columns=table.column_names,
+        content_hash=content_hash,
+    )
     if path.suffix == ".parquet":
-        meta = dict(table.schema.metadata or {})
-        meta[b"kgfq.receipt"] = json.dumps(receipt, sort_keys=True).encode()
-        pq.write_table(table.replace_schema_metadata(meta), path, compression="zstd")
+        write_parquet(path, table, receipt, name=path.stem)
     elif path.suffix == ".csv":
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)

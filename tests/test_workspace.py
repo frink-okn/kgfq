@@ -6,6 +6,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from kgfq.workspace.log import Step, classify_file, weakest_grade
+from kgfq.workspace.receipts import new_receipt
 from kgfq.workspace.store import Pin, TableHash, Workspace, WorkspaceError
 
 
@@ -23,17 +24,52 @@ def triples(rows):
     )
 
 
+def receipt(step=1, grade="bundle"):
+    return new_receipt(
+        kind="fetch",
+        step=step,
+        grade=grade,
+        sources=[],
+        shape="triples",
+        completeness={"complete": True, "incomplete_because": []},
+        totals={"requests": 0},
+    )
+
+
 def test_table_write_carries_receipt_in_footer_and_sidecar(tmp_path):
     ws = Workspace(tmp_path)
     t = triples([("a", "p", "x"), ("b", "p", "y")])
-    info = ws.write_table("t1", t, {"kind": "fetch", "grade": "bundle", "step": 1})
+    given = receipt()
+    info = ws.write_table("t1", t, given)
     assert info.rows == 2 and info.columns[:3] == ["s", "p", "o"]
     sidecar = json.loads(ws.receipt_path("t1").read_text())
-    footer = json.loads(pq.read_schema(ws.table_path("t1")).metadata[b"kgfq.receipt"])
+    footer = json.loads(pq.read_schema(ws.table_path("t1")).metadata[b"kgf.receipt"])
     assert sidecar == footer == info.receipt
-    assert sidecar["content_hash"].startswith("sha256:") and sidecar["table"] == "t1"
+    core = footer["core"]
+    assert core["content_hash"] == info.content_hash == Workspace.content_hash(t)
+    assert (core["table"], core["rows"], core["columns"]) == ("t1", 2, t.column_names)
+    assert "table" not in given["core"], "the receipt passed in is not written to"
     assert ws.list_tables() == ["t1"]
-    assert ws.read_receipt("t1")["grade"] == "bundle"
+    assert ws.read_receipt("t1")["core"]["grade"] == "bundle"
+
+
+def test_a_tables_receipt_is_its_footer_and_a_sidecar_stands_alone_only_without_one(tmp_path):
+    """The footer cannot be parted from the rows, so it is the receipt of record.
+    A session another client wrote need not have sidecars; a step that wrote no
+    table has only one."""
+    ws = Workspace(tmp_path)
+    ws.write_table("t1", triples([("a", "p", "x")]), receipt())
+    ws.receipt_path("t1").write_text(json.dumps({"core": {"grade": "asserted"}}))
+    assert ws.read_receipt("t1")["core"]["grade"] == "bundle"
+    ws.receipt_path("t1").unlink()
+    assert ws.read_receipt("t1")["core"]["table"] == "t1"
+    ws.write_receipt("aborted", receipt(step=2))
+    assert ws.read_receipt("aborted")["core"]["step"] == 2 and not ws.has_table("aborted")
+    with pytest.raises(WorkspaceError, match="no table or receipt named 'nothing'"):
+        ws.read_receipt("nothing")
+    pq.write_table(triples([("a", "p", "x")]), ws.table_path("bare"))
+    with pytest.raises(WorkspaceError, match="carries no receipt in its footer"):
+        ws.read_receipt("bare")
 
 
 def test_content_hash_ignores_row_order(tmp_path):
@@ -125,11 +161,7 @@ def test_log_steps_and_classification(tmp_path):
     ws = Workspace(tmp_path)
     step = Step(ws, "cli", "fetch", {"ds": "chemkg"})
     assert step.step == 1
-    ws.write_table(
-        "genes",
-        triples([("http://g/1", "p", "http://x/1")]),
-        {"kind": "fetch", "grade": "bundle", "step": 1},
-    )
+    ws.write_table("genes", triples([("http://g/1", "p", "http://x/1")]), receipt())
     step.output(table="genes")
     rec = step.finish()
     assert rec["step"] == 1 and rec["status"] == "ok" and rec["schema"] == "kgfq.log/1"

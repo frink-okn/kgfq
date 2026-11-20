@@ -7,20 +7,21 @@ the corpus's 20,000 budget — and 43 of the 94 corpus receipts exceed 500
 requests. That list is the evidence the planner fixes of 2026-09-10 were made
 from and the client side of the access-log join, so it is kept whole, in the
 engine's receipt filed beside the table under its own name and pointed at by
-path and digest. The kgfq receipt — which is also the Parquet footer and the
-log record's summary — carries the totals, the outcome, the budget, and the
-requests grouped by shape, which is the view those fixes were read from."""
+path and digest. The kgfq receipt, which is also the Parquet footer, carries
+the totals and completeness in its core, where any client reads them, and in
+its detail the query, the outcome, the budget, and the requests grouped by
+shape, which is the view those fixes were read from. The core has no request
+list: it is the engine receipt's."""
 
 from __future__ import annotations
 
-import time
 from collections import Counter
 from collections.abc import Iterable, Mapping
 from typing import Any
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from ..workspace.log import weakest_grade
-from ..workspace.receipts import RECEIPT_SCHEMA
+from ..workspace.receipts import new_receipt
 from .engine import Budget, EngineRun
 
 
@@ -113,40 +114,39 @@ def sparql_receipt(
     engine = dict(doc.get("engine") or {})
     engine["command"] = list(run.command)
     engine["exit_code"] = run.exit_code
-    return {
-        "schema": RECEIPT_SCHEMA,
-        "kind": "sparql",
-        "step": step,
-        "grade": weakest_grade(str(s.get("grade", "asserted")) for s in sources),
-        "sources": [dict(s) for s in sources],
-        "shape": shape,
-        "query": query,
-        "original_query": original_query,
-        "normalizations": list(normalizations),
-        "lint": dict(lint),
-        "engine": engine,
-        "budget": {
-            **budget.as_dict(),
-            "max_connections": (doc.get("budget") or {}).get("max_connections"),
-        },
-        "outcome": outcome,
-        "totals": {
+    return new_receipt(
+        kind="sparql",
+        step=step,
+        grade=weakest_grade(str(s.get("grade", "asserted")) for s in sources),
+        sources=sources,
+        shape=shape,
+        totals={
             "requests": int(totals.get("requests", len(requests))),
             "bindings_requests": int(totals.get("bindings_requests", 0)),
-            "schema_requests": int((doc.get("statistics") or {}).get("schema_requests", 0)),
             "bytes_decoded": int(totals.get("bytes", 0)),
             "bytes_wire": sum(wire) if wire else None,
             "elapsed_ms": float(totals.get("elapsed_ms", run.elapsed_ms)),
         },
-        "statistics": dict(doc.get("statistics") or {}),
-        "requests_by_shape": requests_by_shape(requests),
-        "engine_receipt": engine_receipt,
-        "completeness": {
+        completeness={
             "complete": contract == "complete",
             "incomplete_because": because,
             "truncation_reasons": truncations,
         },
-        "approximations": list(approximations),
-        "inputs": dict(inputs or {}),
-        "created": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
+        approximations=approximations,
+        inputs=inputs,
+        detail={
+            "query": query,
+            "original_query": original_query,
+            "normalizations": list(normalizations),
+            "lint": dict(lint),
+            "engine": engine,
+            "budget": {
+                **budget.as_dict(),
+                "max_connections": (doc.get("budget") or {}).get("max_connections"),
+            },
+            "outcome": outcome,
+            "statistics": dict(doc.get("statistics") or {}),
+            "requests_by_shape": requests_by_shape(requests),
+            "engine_receipt": engine_receipt,
+        },
+    )

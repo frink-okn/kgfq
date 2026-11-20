@@ -176,6 +176,10 @@ whose values no row holds.
 
 ## 5. Receipts
 
+*Landed in kgfq 2026-11-20* as `kgf.receipt/1.0` (`kgfq.workspace.receipts.new_receipt`,
+`docs/session/receipt.schema.json`): `{schema, core, detail}`, validated on every receipt the
+tests write, and a receipt with an unknown operation and unknown fields read back whole.
+
 **Core**, shared, read by every client:
 
 - `kind` (the operation that wrote it), `step`, `created`.
@@ -188,8 +192,10 @@ whose values no row holds.
 - `sources`: each graph or endpoint read, graded, with the pin fields of §3.
 - `shape`, `columns`, `rows`, `content_hash`; `pattern` for a one-pattern `bindings` table.
 - `completeness`: `complete`, `incomplete_because`, as `kgfq.receipt/3` defines them.
-- `totals`: `requests`, `bindings_requests`, `bytes`, `elapsed_ms`.
-- `requests`: each with method, URL, status, bytes and `KGF-Request-Id`.
+- `totals`: `requests`, `bindings_requests`, `bytes_decoded`, `bytes_wire` (null where a
+  client cannot see the wire, as a page cannot), `elapsed_ms`.
+- `requests`: each with method, URL, status, bytes and `KGF-Request-Id`; absent where the
+  list is kept elsewhere and the detail points at it, as a SPARQL run's is.
 - `bindings`, for a bound step: `table`, `columns`, `sent`, `matched`, `unmatched`,
   `unmatched_sample` (kgfq C6's unmatched report, explorer D8).
 - `approximations`, and `inputs` for a derived table: the receipts of the tables it read, one
@@ -352,7 +358,7 @@ Temporarily in this repository, since `../kgf-dev` and `../kgf-explorer` are pri
 ```
 docs/session/
   envelope.schema.json       §3
-  receipt-core.schema.json   §5
+  receipt.schema.json        §5: the core, and that there is a detail
   operations.yaml            §6
   fixtures/kgfq/             a small session kgfq wrote: log, tables, receipts
   fixtures/kgf-explorer/     a small session the explorer exported
