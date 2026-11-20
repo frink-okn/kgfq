@@ -1085,7 +1085,17 @@ That helper still does so for `fetch` and `count`, which is an open item.
 chemicals that each affect two genes, and a plain `fetch` of it wrote every row's object
 as its subject, since both positions were keyed `o`. `Pattern.variables` now gives an
 anonymous position its own name only where no variable has it, and `as_body` spells what
-`variables` names, so `fetch`, `count` and `distinct` send one body. Paging
+`variables` names, so `fetch`, `count` and `distinct` send one body.
+*The same day, the repeated variable:* `distinct` refused `?x <p> ?x` over GET, which
+sends bound positions and no names; `count`, `fetch` and `sample` did not. On the fixture,
+where `?x ex:affects ?x` matches nothing, a count answered 24 and a fetch wrote 24 rows
+whose subject was their object. All four now refuse it before any request
+(`Pattern.check_names_are_carried`, `UncarriedEquality`), before the count cache and the
+inventory too, since both key on bound positions. Under bindings the server applies the
+equality, and refuses it in its own words unless the bindings bind the variable in every
+row. R2's other route scans with a GET and filters here, so a bound fetch of such a
+pattern is always a bind-join, sized by the count of the pattern without the equality.
+Paging
 refuses a page that says it is incomplete but carries no cursor, and a cursor that
 does not advance. An independent review of 2026-11-07 found these, and they are
 untested against a misbehaving server, since the tests use real ones.

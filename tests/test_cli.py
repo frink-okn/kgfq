@@ -281,3 +281,13 @@ def test_count_and_fetch_keep_an_anonymous_position_apart_too(ws, tmp_path):
         subjects, objects = set(table["s"].to_pylist()), set(table["o"].to_pylist())
         assert all("/chem/" in s for s in subjects) and all("/gene/" in o for o in objects)
         assert name == "whole" or subjects == chems
+
+
+def test_count_fetch_and_sample_refuse_an_equality_get_cannot_carry(ws):
+    # `?c ex:affects ?c` matches nothing; over GET it was `? ex:affects ?`.
+    for command in ("count", "explain", "fetch", "sample"):
+        _, err = run(command, "chemkg", "?c ex:affects ?c", workspace=ws, expect=2)
+        assert err.startswith("kgfq: `?c <http://example.org/affects> ?c` repeats ?c")
+    log, _ = run("log", workspace=ws)
+    assert log["steps"] == []
+    assert not (ws / "tables").exists()

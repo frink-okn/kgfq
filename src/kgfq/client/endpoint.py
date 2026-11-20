@@ -32,7 +32,14 @@ from urllib.parse import urljoin
 import httpx
 
 from .. import __version__
-from .errors import CapabilityUnavailable, KgfError, KgfqError, TransportError, UnboundBindings
+from .errors import (
+    CapabilityUnavailable,
+    KgfError,
+    KgfqError,
+    TransportError,
+    UnboundBindings,
+    UncarriedEquality,
+)
 from .terms import Term, Var, format_term, term_from_json
 
 JSON = "application/json"
@@ -77,6 +84,35 @@ class Pattern:
         """The variable names the caller wrote, in position order. A bare ``?``
         names nothing, although the wire spells it ``?s``/``?p``/``?o``."""
         return [v.name for v in (self.s, self.p, self.o) if isinstance(v, Var)]
+
+    def repeated(self) -> list[str]:
+        """The variables the pattern names in more than one position."""
+        named = self.named()
+        return sorted({v for v in named if named.count(v) > 1})
+
+    def without_equalities(self) -> Pattern:
+        """The pattern with each repeated variable's positions anonymous: what a
+        GET answers, and an upper bound on the pattern itself."""
+        repeated = self.repeated()
+        s, p, o = (
+            None if isinstance(v, Var) and v.name in repeated else v
+            for v in (self.s, self.p, self.o)
+        )
+        return Pattern(s, p, o)
+
+    def check_names_are_carried(self) -> None:
+        """Refuse a repeated variable before a request that sends no names (C1,
+        2026-11-20). A GET carries bound positions only, so ``?x <p> ?x`` went
+        out as ``? <p> ?``: on the fixture a count answered 24 for a pattern
+        matching nothing, and a fetch wrote 24 rows whose subject was their
+        object. With a body the server applies the equality, and refuses it
+        itself unless the bindings bind the variable in every row."""
+        repeated = self.repeated()
+        if repeated:
+            raise UncarriedEquality(
+                f"`{self.spelled()}` repeats {', '.join('?' + v for v in repeated)}, an "
+                "equality the server can only apply when --values binds it in every row"
+            )
 
     def check_bindings(self, vars_: Sequence[str]) -> None:
         """Refuse bindings that name a variable this pattern does not (C1,
@@ -596,6 +632,7 @@ class Endpoint:
         cursor: str | None = None,
         extra: Mapping[str, Any] | None = None,
     ) -> Response:
+        pattern.check_names_are_carried()
         params: dict[str, Any] = dict(pattern.as_params())
         params["limit"] = limit or self.cap("max_limit", 10000)
         if cursor:
@@ -632,12 +669,14 @@ class Endpoint:
         return Paged(pages(), max_rows=max_rows)
 
     def count(self, release: Release, pattern: Pattern) -> Count:
+        pattern.check_names_are_carried()
         body = self.get(release.link("count"), pattern.as_params()).body
         return Count.from_json(body["count"])
 
     def sample(
         self, release: Release, pattern: Pattern, *, n: int = 25, seed: int = 0
     ) -> list[dict[str, Term]]:
+        pattern.check_names_are_carried()
         params: dict[str, Any] = dict(pattern.as_params())
         params.update({"n": min(n, self.cap("max_sample", 1000)), "seed": seed})
         body = self.get(release.link("sample"), params).body
@@ -775,14 +814,8 @@ class Endpoint:
                 f"`{pattern.spelled()}` binds {group_by}, so it has one value there; "
                 "group by a variable position, or count it"
             )
-        repeated = sorted({v for v in pattern.named() if pattern.named().count(v) > 1})
-        if repeated and rows is None:
-            # GET has no variable names, so `?x p ?x` would go out as `? p ?`
-            # and answer without the equality; refuse rather than drop it.
-            raise KgfqError(
-                f"`{pattern.spelled()}` repeats {', '.join('?' + v for v in repeated)}, an "
-                "equality the server can only apply when --values binds it in every row"
-            )
+        if rows is None:
+            pattern.check_names_are_carried()
         if "distinct" not in release.links:
             raise CapabilityUnavailable(
                 f"{release.dataset}@{release.version} on {self.origin} publishes no `distinct` "

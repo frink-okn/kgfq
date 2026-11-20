@@ -96,19 +96,29 @@ def plan_fetch(
     cardinality c, bind-join costs ⌈k / max_bindings⌉ requests and column-fetch
     ⌈c / max_limit⌉ — derived from the caps this endpoint publishes. Bindings
     that name a variable the pattern does not are refused before R1's count,
-    whichever route R2 would take (C1, 2026-11-06)."""
+    whichever route R2 would take (C1, 2026-11-06), and so is a repeated
+    variable with no bindings to carry its equality (2026-11-20)."""
     if rows is not None:
         pattern.check_bindings(vars_ or [])
+    else:
+        pattern.check_names_are_carried()
     caps = {
         "max_limit": endpoint.cap("max_limit", 10000),
         "max_bindings": endpoint.cap("max_bindings", 200),
     }
     plan = Plan(intent=intent_of(pattern, vars_, rows), steps=[], caps=caps)
+    # Under bindings a repeated variable's equality is the server's to apply;
+    # the count that sizes the pattern is of the pattern without it, an upper
+    # bound. Without bindings the count below refuses it (C1, 2026-11-20).
+    repeated = pattern.repeated() if rows is not None else []
+    counted = pattern.without_equalities() if repeated else pattern
     if stats is not None:
-        count, source = stats.count_source(pattern)
+        count, source = stats.count_source(counted)
     else:
-        count, source = endpoint.count(release, pattern), "server"
+        count, source = endpoint.count(release, counted), "server"
     plan.evidence["count"] = {"value": count.value, "exact": count.exact, "source": source}
+    if repeated:
+        plan.evidence["count"]["of"] = counted.spelled()
     column_requests = max(1, math.ceil(count.value / caps["max_limit"]))
     if rows is None:
         plan.steps.append(
@@ -129,7 +139,18 @@ def plan_fetch(
         "bind_join_requests": bind_requests,
         "column_fetch_requests": column_requests,
     }
-    if bind_requests <= column_requests:
+    if repeated:
+        plan.steps.append(
+            PlanStep(
+                "bindings",
+                pattern.as_body(),
+                bind_requests,
+                None,
+                bindings=k,
+                note=f"R2: bind-join, since only a body carries the equality on {', '.join('?' + v for v in repeated)}",
+            )
+        )
+    elif bind_requests <= column_requests:
         plan.steps.append(
             PlanStep(
                 "bindings",
