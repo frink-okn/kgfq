@@ -194,6 +194,18 @@ def test_log_steps_and_classification(tmp_path):
     assert [r["step"] for r in ws.read_log()] == [1, 2]
 
 
+def test_a_value_is_derived_from_the_step_that_first_held_it(tmp_path):
+    """Tables are listed by name, and `affects`, written at step 4, came before
+    `chems`, written at step 3, so a chemical both hold was said to come from
+    the later step."""
+    ws = Workspace(tmp_path)
+    ws.write_table("chems", triples([("http://c/1", "p", "x")]), receipt(step=3))
+    ws.write_table("affects", triples([("http://c/1", "p", "http://g/2")]), receipt(step=4))
+    got = Step(ws, "cli", "fetch", {}).input_values(["http://c/1", "http://g/2"])
+    assert (got["http://c/1"]["table"], got["http://c/1"]["step"]) == ("chems", 3)
+    assert (got["http://g/2"]["table"], got["http://g/2"]["step"]) == ("affects", 4)
+
+
 def test_weakest_grade():
     assert weakest_grade(["bundle", "bundle"]) == "bundle"
     assert weakest_grade(["bundle", "sparql"]) == "sparql"

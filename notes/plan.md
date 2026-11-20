@@ -844,6 +844,10 @@ record as the explorer would write it, for an operation kgfq does not have, vali
 Unchanged, and to settle (`notes/session-format.md` §11): a step a server refuses, or kgfq
 refuses before any request, writes no record; `datasets` writes none either.
 
+*Fixed 2026-11-20:* a derived value names the step that first held it. `classify_values`
+read tables in name order, so a chemical in both `chems` (step 3) and `affects` (step 4)
+was said to come from step 4. It reads them in step order.
+
 `kgfq import <file | url> --from "<description>"` is the one door for data from
 anywhere else (D17): another MCP server's result the agent saved to a file, a CSV
 the user had, an API. It writes a table with a receipt graded `external`, carrying

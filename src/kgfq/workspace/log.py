@@ -37,7 +37,18 @@ def classify_values(ws: Workspace, values: Iterable[str]) -> dict[str, dict[str,
     if not wanted:
         return out
     remaining = set(wanted)
+    # In step order, so a value is derived from where it first appeared: the
+    # listing is by name, and `affects` at step 4 would answer for `chems` at 3.
+    cores: dict[str, dict[str, Any]] = {}
     for name in ws.list_tables():
+        try:
+            cores[name] = ws.read_receipt(name)["core"]
+        except Exception:
+            continue
+    by_step = sorted(
+        cores, key=lambda n: (cores[n].get("step") is None, cores[n].get("step") or 0, n)
+    )
+    for name in by_step:
         if not remaining:
             break
         try:
@@ -49,9 +60,7 @@ def classify_values(ws: Workspace, values: Iterable[str]) -> dict[str, dict[str,
             for c in term_column_names(table.column_names)
             if pa.types.is_string(table.schema.field(c).type)
         ]
-        if not cols:
-            continue
-        core = ws.read_receipt(name)["core"]
+        core = cores[name]
         for c in cols:
             present = set(table.column(c).unique().to_pylist()) & remaining
             for v in present:
