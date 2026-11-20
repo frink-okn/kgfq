@@ -395,16 +395,24 @@ fixture, and reproduce its content hashes and `triples()`. The explorer has no t
 (its §3 item 2); a Node script doing this is its first test. The explorer cites this
 directory by commit until it moves.
 
+*Landed 2026-11-20:* `fixtures/kgfq/`, seven steps against the two fixture servers, with
+`expected/<table>.nt` holding the triples each table stands for, and a README saying what a
+reader must be able to do with it and what each step is there to show. Its log is 18 kB and
+its four tables 8 kB each. `tests/test_session_fixture.py` reads it with no server, and
+reruns its commands against fresh servers to hold that it is still what kgfq writes,
+comparing everything but times, request ids, ports and the bundle's digest.
+`fixtures/kgf-explorer/` waits for the explorer's export (§10 step 6).
+
 Opening a session: a zip of the workspace, a chosen directory, or
 `?session=<url>` naming a zip the user put somewhere. Sharing is passing the file.
 
 ## 10. Sequence
 
-1. This note, agreed.
-2. `docs/session/`: the schemas, the registry from §8, and a kgfq fixture.
+1. This note, agreed. *Done 2026-11-20.*
+2. `docs/session/`: the schemas, the registry from §8, and a kgfq fixture. *Done 2026-11-20.*
 3. kgfq writes `kgf.session/1`: the envelope, receipt core and detail, bindings fetch tables
    (C6 changed), the specified hash, `triples()` behind `kgfq export`. No reader for
-   `kgfq.log/1`: no workspace written before this is being kept (2026-11-20).
+   `kgfq.log/1`: no workspace written before this is being kept. *Done 2026-11-20.*
 4. kgfq parity, one operation at a time, in the order a harness needs them: `bind` for
    `fetch` and `count`, `sql` (C8), `read_table`, `labels`, `search`, the template operations,
    `count` over many graphs, `terms`, `overlap`, `connections`, `where`, `answer`.

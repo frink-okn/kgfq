@@ -1,0 +1,12 @@
+<http://example.org/chem/1> <http://www.w3.org/2000/01/rdf-schema#label> "atrazine"@en .
+<http://example.org/chem/2> <http://www.w3.org/2000/01/rdf-schema#label> "bisphenol A"@en .
+<http://example.org/chem/3> <http://www.w3.org/2000/01/rdf-schema#label> "caffeine"@en .
+<http://example.org/chem/4> <http://www.w3.org/2000/01/rdf-schema#label> "dioxin"@en .
+<http://example.org/chem/5> <http://www.w3.org/2000/01/rdf-schema#label> "ethanol"@en .
+<http://example.org/chem/6> <http://www.w3.org/2000/01/rdf-schema#label> "formaldehyde"@en .
+<http://example.org/chem/7> <http://www.w3.org/2000/01/rdf-schema#label> "glyphosate"@en .
+<http://example.org/chem/8> <http://www.w3.org/2000/01/rdf-schema#label> "hexane"@en .
+<http://example.org/chem/9> <http://www.w3.org/2000/01/rdf-schema#label> "ibuprofen"@en .
+<http://example.org/chem/10> <http://www.w3.org/2000/01/rdf-schema#label> "juglone"@en .
+<http://example.org/chem/11> <http://www.w3.org/2000/01/rdf-schema#label> "ketamine"@en .
+<http://example.org/chem/12> <http://www.w3.org/2000/01/rdf-schema#label> "lindane"@en .

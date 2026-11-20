@@ -844,6 +844,14 @@ record as the explorer would write it, for an operation kgfq does not have, vali
 Unchanged, and to settle (`notes/session-format.md` §11): a step a server refuses, or kgfq
 refuses before any request, writes no record; `datasets` writes none either.
 
+*Landed 2026-11-20 — the format's fixture.* `docs/session/fixtures/kgfq/` is a seven-step
+session kgfq wrote against the two fixture servers, kept so that a second client has
+something real to read: the log, four tables, and the triples each stands for. Its README
+says what a reader must be able to do with it. `tests/test_session_fixture.py` reads it
+with no server (schemas, hashes, `triples()`), and reruns its commands to hold that it is
+still what kgfq writes; `KGFQ_WRITE_FIXTURE=1` rewrites it when the format changes on
+purpose.
+
 *Fixed 2026-11-20:* a derived value names the step that first held it. `classify_values`
 read tables in name order, so a chemical in both `chems` (step 3) and `affects` (step 4)
 was said to come from step 4. It reads them in step order.
