@@ -61,3 +61,9 @@ class UnboundBindings(KgfqError):
     """Bindings name a variable the pattern does not (C1, 2026-11-06), refused
     before any request: such a column binds nothing, so each row would answer
     the whole pattern."""
+
+
+class UncarriedEquality(KgfqError):
+    """A pattern repeats a variable and the request cannot carry the equality
+    (C1, 2026-11-20), refused before any request: a GET sends bound positions
+    and no names, so ``?x <p> ?x`` would be answered as ``? <p> ?``."""

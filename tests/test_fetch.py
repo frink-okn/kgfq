@@ -6,7 +6,7 @@ from contextlib import contextmanager
 import pytest
 
 from kgfq.client.endpoint import Endpoint, Pattern, RequestRecord
-from kgfq.client.errors import UnboundBindings
+from kgfq.client.errors import KgfError, UnboundBindings, UncarriedEquality
 from kgfq.client.statistics import Statistics
 from kgfq.client.terms import Iri, Var
 from kgfq.plan import execute_fetch, plan_fetch
@@ -315,3 +315,60 @@ def test_the_refusal_names_both_sides_and_the_pattern_to_write():
     BOUND.check_bindings(["c"])
     BOUND.check_bindings(["g", "c"])
     BOUND.check_bindings([])
+
+
+SELF = Pattern(s=Var("x"), p=AFFECTS, o=Var("x"))
+
+
+def test_a_repeated_variable_is_refused_where_no_name_is_sent(ep, tmp_path):
+    """A GET sends bound positions and no names, so `?x affects ?x`, which
+    matches nothing in the fixture, was answered as `? affects ?`: a count of
+    24, and 24 fetched rows whose subject was their object (2026-11-20)."""
+    rel = ep.release("chemkg")
+    stats = Statistics(Workspace(tmp_path), ep, rel)
+    doors = {
+        "Endpoint.count": lambda: ep.count(rel, SELF),
+        "Endpoint.fragment": lambda: next(ep.fragment(rel, SELF)),
+        "Endpoint.sample": lambda: ep.sample(rel, SELF),
+        "Statistics.count_source": lambda: stats.count_source(SELF),
+        "plan_fetch": lambda: plan_fetch(ep, rel, SELF),
+        "plan_fetch(stats)": lambda: plan_fetch(ep, rel, SELF, stats=stats),
+    }
+    with ep.trace() as t:
+        for door, call in doors.items():
+            with pytest.raises(UncarriedEquality, match=re.escape("repeats ?x")):
+                call()
+                pytest.fail(f"{door} answered {SELF.spelled()} without its equality")
+    assert t.requests == 0
+    assert not (stats.dir / "counts.jsonl").exists()
+    assert SELF.without_equalities() == Pattern(p=AFFECTS)
+    assert Pattern(s=Var("x"), p=Var("y"), o=Var("x")).without_equalities() == Pattern(p=Var("y"))
+
+
+def test_a_bound_repeated_variable_is_always_a_bind_join(ep):
+    """Under bindings the server applies the equality. The other R2 route scans
+    with a GET and filters here, which kept every row whose object was a bound
+    value; so the plan takes the body whatever the arithmetic says, and sizes
+    the pattern by the count of it without the equality, an upper bound."""
+    rel = ep.release("chemkg")
+    genes = [[Iri(f"{EX}gene/G{i}")] for i in (1, 2, 3)]
+    with caps(ep, max_bindings=1):
+        cheaper = plan_fetch(ep, rel, Pattern(p=AFFECTS, o=Var("x")), vars_=["x"], rows=genes)
+        plan, table, _ = fetched(ep, rel, SELF, vars_=["x"], rows=genes)
+    assert cheaper.steps[-1].op == "fragment", "the arithmetic alone picks the scan here"
+    assert plan.steps[-1].op == "bindings" and "equality on ?x" in plan.steps[-1].note
+    assert plan.evidence["count"] == {
+        "value": 24,
+        "exact": True,
+        "source": "server",
+        "of": "? <http://example.org/affects> ?",
+    }
+    assert table.num_rows == 0
+
+
+def test_an_equality_the_bindings_do_not_bind_is_the_servers_refusal(ep):
+    """`?x ?p ?x` binding only `?p`: the server refuses it, in its own words."""
+    rel = ep.release("chemkg")
+    pattern = Pattern(s=Var("x"), p=Var("p"), o=Var("x"))
+    with pytest.raises(KgfError, match="repeated pattern variable \\?x must be bound"):
+        fetched(ep, rel, pattern, vars_=["p"], rows=[[AFFECTS]])

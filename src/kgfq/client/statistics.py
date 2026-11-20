@@ -275,7 +275,10 @@ class Statistics:
             )
 
     def count_source(self, pattern: Pattern) -> tuple[Count, str]:
-        """A count and where it came from: ``inventory``, ``cache``, or ``server``."""
+        """A count and where it came from: ``inventory``, ``cache``, or ``server``.
+        A repeated variable is refused before the cache or the inventory is read:
+        both key on bound positions, as the GET does."""
+        pattern.check_names_are_carried()
         key = canonical_pattern(pattern)
         cached = self._count_cache().get(key)
         if cached is not None:
