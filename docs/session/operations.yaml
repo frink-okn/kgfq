@@ -170,6 +170,7 @@ operations:
         bind: *bind
         values: {type: string, description: "kgfq: a bindings file, classified in the record's inputs."}
         max_rows: {type: integer, minimum: 1, description: "kgfq: stop here; an approximation in the receipt when rows were left."}
+        all: {type: boolean, description: "kgfq: read a pattern larger than the fetch guard whole."}
         out: {type: string, description: "kgfq: the table's name, or a .parquet, .csv or .json path."}
     table: bindings
     implemented_by: {kgf-explorer: fetch, kgfq: fetch}

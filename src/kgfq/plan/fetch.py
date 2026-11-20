@@ -12,6 +12,7 @@ given them.
 from __future__ import annotations
 
 import math
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
@@ -19,11 +20,34 @@ from typing import Any
 import pyarrow as pa
 
 from ..client.endpoint import Endpoint, Pattern, Release
-from ..client.errors import BadColumns
+from ..client.errors import BadColumns, TooLarge
 from ..client.statistics import Statistics
 from ..client.terms import Term, Var, format_term, term_columns, variable_columns
 
 PLAN_SCHEMA = "kgfq.plan/1"
+# The guard (C4): a fetch that would read more rows than this is refused unless
+# the caller bounds it or asks for all of it. A tool an agent calls has to be
+# bounded, and a pattern typed by accident (`? ? ?`) should cost a count.
+GUARD_ROWS = 1_000_000
+GUARD_ENV = "KGFQ_FETCH_GUARD_ROWS"
+# Whole-predicate fetches of 0.5 M to 14 M triples ran at 45,000 to 90,000 rows a
+# second (2026-11). Only the refusal's estimate of what was not spent reads this.
+MEASURED_ROWS_PER_SECOND = (45_000, 90_000)
+
+
+def guard_rows() -> int | None:
+    """The guard's limit: :data:`GUARD_ROWS`, or ``KGFQ_FETCH_GUARD_ROWS``, where
+    ``0`` or ``off`` means no guard."""
+    text = os.environ.get(GUARD_ENV, "").strip().lower().replace("_", "").replace(",", "")
+    if not text:
+        return GUARD_ROWS
+    if text in ("0", "off", "none"):
+        return None
+    if not text.isdigit():
+        raise TooLarge(f"{GUARD_ENV}={os.environ[GUARD_ENV]!r} is not a number of rows, or `off`")
+    return int(text)
+
+
 POSITIONS = {"s": "subject", "p": "predicate", "o": "object"}
 
 
@@ -157,13 +181,20 @@ def plan_fetch(
     vars_: Sequence[str] | None = None,
     rows: Sequence[Sequence[Term]] | None = None,
     stats: Statistics | None = None,
+    guard: int | None = None,
 ) -> Plan:
     """R1: one `/count` sizes the pattern. R2: with k join keys and pattern
     cardinality c, bind-join costs ⌈k / max_bindings⌉ requests and column-fetch
     ⌈c / max_limit⌉ — derived from the caps this endpoint publishes. Bindings
     that name a variable the pattern does not are refused before R1's count,
     whichever route R2 would take (C1, 2026-11-06), and so is a repeated
-    variable with no bindings to carry its equality (2026-11-20)."""
+    variable with no bindings to carry its equality (2026-11-20).
+
+    With ``guard``, the plan also says how many rows its read would take and
+    whether that is over the guard (:func:`check_guard`). A scan reads the
+    pattern's count. A bind-join reads at most that, so under the guard it needs
+    no second look; over it, one bound `/count` sums what the input tuples
+    reach, exactly, at the cost the fetch's own requests would have had."""
     if rows is not None:
         pattern.check_bindings(vars_ or [])
     else:
@@ -197,6 +228,7 @@ def plan_fetch(
                 note="R1: paged at max_limit",
             )
         )
+        _size(plan, guard)
         return plan
     k = len(distinct_rows(rows))
     bind_requests = max(1, math.ceil(k / caps["max_bindings"]))
@@ -239,7 +271,96 @@ def plan_fetch(
                 note=f"R2: column-fetch then filter locally, ⌈{count.value}/{caps['max_limit']}⌉ < ⌈{k}/{caps['max_bindings']}⌉",
             )
         )
+    step = plan.steps[-1]
+    if guard is not None and step.op == "bindings" and count.value > guard:
+        distinct = distinct_rows(rows)
+        counts = (
+            stats.count_bindings(pattern, vars_ or [], distinct)
+            if stats is not None
+            else endpoint.count_bindings(release, pattern, vars_ or [], distinct)
+        )
+        step.estimated_rows = sum(c.value for c in counts)
+        plan.evidence["bound_count"] = {
+            "value": step.estimated_rows,
+            "exact": all(c.exact for c in counts),
+        }
+    _size(plan, guard)
     return plan
+
+
+def _size(plan: Plan, guard: int | None) -> None:
+    """Record what the plan's read would take against the guard. A bind-join
+    with no row estimate is bounded by a pattern count already under it."""
+    if guard is None:
+        return
+    reads = plan.steps[-1].estimated_rows
+    plan.evidence["guard"] = {
+        "rows": guard,
+        "reads": reads,
+        "over": reads is not None and reads > guard,
+    }
+
+
+def check_guard(
+    plan: Plan,
+    pattern: Pattern,
+    release: Release,
+    *,
+    max_rows: int | None = None,
+    allow_all: bool = False,
+) -> None:
+    """Refuse a fetch whose read is over the guard, before a row is read, unless
+    the caller bounded it (``max_rows``) or asked for all of it. The refusal
+    says what it would have cost and what would make it smaller, since the
+    reader is as likely an agent as a person.
+
+    ``max_rows`` bounds a bind-join and a plain scan. It does not bound a scan
+    that filters for bound values, which reads the whole pattern to keep a few
+    rows, so that one needs ``allow_all``."""
+    verdict = plan.evidence.get("guard")
+    if not verdict or not verdict["over"] or allow_all:
+        return
+    step = plan.steps[-1]
+    filtered_scan = step.op == "fragment" and step.bindings is not None
+    if max_rows is not None and not filtered_scan:
+        return
+    reads, limit = int(verdict["reads"]), int(verdict["rows"])
+    fast, slow = (max(1, round(reads / r)) for r in reversed(MEASURED_ROWS_PER_SECOND))
+    took = (
+        f"{_duration(fast)} to {_duration(slow)}"
+        if _duration(fast) != _duration(slow)
+        else _duration(slow)
+    )
+    what = (
+        f"`{pattern.spelled()}` in {release.dataset} matches {reads:,} triples"
+        if step.bindings is None
+        else f"the {step.bindings:,} bound values reach {reads:,} triples of "
+        f"`{pattern.spelled()}` in {release.dataset}"
+        if step.op == "bindings"
+        else f"filtering for {step.bindings:,} bound values would read all {reads:,} triples of "
+        f"`{pattern.spelled()}` in {release.dataset}"
+    )
+    narrower = (
+        "Narrow it: bind a variable to an earlier table's column (`--bind`), or take a part "
+        "(`--max-rows N`); `kgfq distinct` lists the values of one position without reading "
+        "the triples."
+        if step.bindings is None
+        else "Bind fewer values, or take a part (`--max-rows N`)."
+        if step.op == "bindings"
+        else "Bind fewer values, so that a bind-join is the cheaper route."
+    )
+    raise TooLarge(
+        f"{what}: {step.estimated_requests:,} request{'' if step.estimated_requests == 1 else 's'}"
+        f", and about {took} at the rates large "
+        f"fetches have run at. That is over the guard of {limit:,} rows, so nothing was fetched. "
+        f"{narrower} To fetch it all, pass `--all`."
+    )
+
+
+def _duration(seconds: int) -> str:
+    if seconds < 90:
+        return f"{seconds} s"
+    return f"{round(seconds / 60)} min"
 
 
 def execute_fetch(

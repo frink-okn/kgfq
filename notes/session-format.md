@@ -361,7 +361,7 @@ and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the 
 | `count` | many graphs, bind from a table | one graph, `--values`, `--bind` (2026-11-20) | **kgfq needs** many graphs |
 | `sample` | — | `sample` | kgfq only for now |
 | `distinct` | — | `distinct` (kgf-rs unit 38, not on `apps.okn.us`) | kgfq only for now |
-| `fetch` | bind from a table | `--values`, `--bind` (2026-11-20), `--max-rows`, R1/R2 plan | have |
+| `fetch` | bind from a table; the visitor's budget stops a run and keeps what arrived (its D10) | `--values`, `--bind` (2026-11-20), `--max-rows`, R1/R2 plan; refused over 1,000,000 rows unless `--all` (the guard, 2026-11-20) | have; the two bound a fetch differently, which the format need not reconcile |
 | `describe`, `incoming`, `instances`, `neighbors`, `two_hop` | SPARQL templates in the tab | — | **kgfq needs**, as fetch plans, not SPARQL: each is one or two patterns |
 | `sql` | one SELECT, locked DuckDB-Wasm | — (C8 not built) | **kgfq needs** |
 | `labels` | `/labels`, beside tables | — (C7 not built) | **kgfq needs** |

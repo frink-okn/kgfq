@@ -73,3 +73,8 @@ class BadColumns(KgfqError):
     """A pattern whose fetched table could not be given its columns (C6,
     2026-11-20), refused before any request: a fetched table's columns are the
     pattern's variables, so each needs a name of its own."""
+
+
+class TooLarge(KgfqError):
+    """A fetch the guard refused before any row was read (plan C4): it would
+    read more rows than the guard allows, and nothing said to read them all."""
