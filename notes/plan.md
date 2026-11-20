@@ -842,7 +842,19 @@ arguments the registry's schema accepts and no other, and a receipt that validat
 equals its table's footer; two steps against two servers each name the origin they read. A
 record as the explorer would write it, for an operation kgfq does not have, validates.
 Unchanged, and to settle (`notes/session-format.md` §11): a step a server refuses, or kgfq
-refuses before any request, writes no record; `datasets` writes none either.
+refuses before any request, writes no record; `datasets` writes none either (it does since
+the same day, below).
+
+*Landed 2026-11-20 — `list_graphs` is a step.* It read each origin's service descriptor and
+logged nothing, against this unit's own rule and unlike `../kgf-explorer`, where it is an
+operation like any other. Which graphs there were to choose from is part of what happened.
+The record pins nothing, since no release is read. Its receipt's sources are the origins
+asked, of a new source kind `origin` (a KGF server asked what it serves), with each
+descriptor request and its `KGF-Request-Id`. Its result counts the graphs, those shown
+under `--text`, and the origins that did not answer. It writes no table: a listing's shape
+is open (`notes/session-format.md` §11). The grade is `bundle`, as everything a KGF server
+says is graded; a listing can change where a release cannot, and with no table the grade
+reaches nothing.
 
 *Landed 2026-11-20 — the format's fixture.* `docs/session/fixtures/kgfq/` is a seven-step
 session kgfq wrote against the two fixture servers, kept so that a second client has

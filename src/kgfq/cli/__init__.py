@@ -14,6 +14,7 @@ import hashlib
 import json
 import sys
 from collections.abc import Mapping, Sequence
+from contextlib import ExitStack
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +150,24 @@ class Cli:
         return 0
 
     def list_graphs(self) -> int:
-        entries = self.session.datasets()
+        """``kgfq list_graphs``: every graph on every endpoint of the workspace,
+        never grouped by server (D14). A step like any other: which graphs
+        there were to choose from is part of what happened. It reads each
+        origin's service descriptor and no release, so it pins nothing."""
+        origins = self.session.origins()
+        step = self.step("list_graphs", text=self.args.text)
+        with ExitStack() as stack:
+            traces = [stack.enter_context(self.session.endpoint(o).trace()) for o in origins]
+            entries = self.session.datasets()
+        listed = len(entries)
+        step.receipt(
+            request_receipt(
+                step=step.step,
+                kind="list_graphs",
+                sources=[{"kind": "origin", "grade": "bundle", "origin": o} for o in origins],
+                records=[r for t in traces for r in t.records],
+            )
+        )
         if self.args.text:
             q = self.args.text.lower()
             entries = [
@@ -161,6 +179,8 @@ class Cli:
             "datasets": [dataclasses.asdict(e) for e in entries],
             "unreachable": self.session.unreachable,
         }
+        step.result(graphs=listed, shown=len(entries), unreachable=dict(self.session.unreachable))
+        step.finish()
         self.emit(
             payload,
             table=[[e.id, e.current, e.triples, e.title, e.origin] for e in entries],
@@ -176,7 +196,9 @@ class Cli:
         step.pin(_pin(ep, rel))
         with ep.trace() as t:
             card = ep.summary(rel, self.args.format)
-        step.receipt(request_receipt(step=step.step, kind="graph_summary", release=rel, trace=t))
+        step.receipt(
+            request_receipt(step=step.step, kind="graph_summary", release=rel, records=t.records)
+        )
         step.finish()
         if self.args.format == "md":
             self.out.write(card if card.endswith("\n") else card + "\n")
@@ -231,7 +253,7 @@ class Cli:
                 body["next"] = None
             else:
                 body = ep.schema_page(rel, params).body
-        step.receipt(request_receipt(step=step.step, kind="schema", release=rel, trace=t))
+        step.receipt(request_receipt(step=step.step, kind="schema", release=rel, records=t.records))
         step.result(items=len(body.get("items", [])), complete=body.get("complete"))
         step.finish()
         rows = []
@@ -287,7 +309,7 @@ class Cli:
                     for i, (r, c) in enumerate(zip(rows, counts, strict=True))
                 ]
                 header = ["binding", "row", "count"]
-        step.receipt(request_receipt(step=step.step, kind="count", release=rel, trace=t))
+        step.receipt(request_receipt(step=step.step, kind="count", release=rel, records=t.records))
         step.result(**payload if rows is None else {"total": payload["total"]})
         step.finish()
         self.emit(payload, table=table, header=header)
@@ -301,7 +323,7 @@ class Cli:
         step.pin(_pin(ep, rel))
         with ep.trace() as t:
             rows = ep.sample(rel, pattern, n=a.n, seed=a.seed)
-        step.receipt(request_receipt(step=step.step, kind="sample", release=rel, trace=t))
+        step.receipt(request_receipt(step=step.step, kind="sample", release=rel, records=t.records))
         step.result(rows=len(rows))
         step.finish()
         names = list(pattern.variables().values())
@@ -360,7 +382,9 @@ class Cli:
         }
         if a.top is not None:
             payload["top"] = a.top
-        step.receipt(request_receipt(step=step.step, kind="distinct", release=rel, trace=t))
+        step.receipt(
+            request_receipt(step=step.step, kind="distinct", release=rel, records=t.records)
+        )
         step.result(distinct=len(answer.values), triples=answer.triples)
         step.finish()
         with_bindings = rows is not None

@@ -20,12 +20,12 @@
         },
         "sources": {
           "type": "array",
-          "description": "Every graph or endpoint the step read, each graded. A `kgf` source is a graph at a pinned release; its digest is its identity and its origin is where it was fetched.",
+          "description": "Every graph or endpoint the step read, each graded. A `kgf` source is a graph at a pinned release; its digest is its identity and its origin is where it was fetched. An `origin` source is a KGF server asked what it serves, with no release read.",
           "items": {
             "type": "object",
             "required": ["kind", "grade"],
             "properties": {
-              "kind": {"type": "string", "description": "`kgf` or `sparql` today."},
+              "kind": {"type": "string", "description": "`kgf`, `origin` or `sparql` today."},
               "grade": {"type": "string"},
               "origin": {"type": "string"},
               "dataset": {"type": "string"},
