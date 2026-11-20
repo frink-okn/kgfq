@@ -813,6 +813,27 @@ of tables as a separate, explicit step, since `labels=true` on row operations is
 implemented and the label-role declarations are wrong on a third of the federation
 (results §7.4a) — hydration against a wrong declaration returns nulls faster.
 
+*Landed 2026-11-20 — `search`, one graph* (`kgfq.ops.search`, `tests/test_search.py`): the
+operation `../kgf-explorer` calls `search`, and half of what this unit calls `resolve`. The
+fan-out across graphs, merged by `match_kind` and rank, is still to build. Decided while
+building:
+- **The hits are a table**, `bindings` with no pattern, under the explorer's variables
+  (`subject`, `label`, `predicate`, `matched`, `score`) and `match_kind`. So a later step
+  binds from `subject`, and an IRI taken from a hit is derived from the search step, which
+  is C9's own test of the classification: "the same IRI copied from a `resolve` result is
+  classified derived".
+- **One request.** `/search` answers with its top `limit` hits, at most the server's
+  `max_search_results`, and no cursor: asked for 1,000 of a larger set on kgf 0.6.0 it says
+  `complete: true` and gives no `next`. A table that holds as many hits as were asked for
+  says, as an approximation, that it is the first so many by rank and there may be more.
+  The first version followed a cursor the server never gives.
+- **The command prints the hits**, as `count` prints its count: turning a name into an IRI
+  is the answer, and twenty hits is its default. The handle carries them beside the
+  table's name.
+- **It is a function of the library** (`kgfq.ops`), which the CLI calls and `kgfq-mcp` will:
+  resolve, log, ask, file, return a handle. The operations written before it are still
+  methods of the CLI and move there with the MCP server (§7).
+
 ### C8. The sandboxed DuckDB
 
 D6 as code: one module constructs the connection, applies the settings, owns the
