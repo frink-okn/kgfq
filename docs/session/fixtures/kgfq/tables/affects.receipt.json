@@ -1,0 +1,149 @@
+{
+ "core": {
+  "approximations": [],
+  "columns": [
+   "chem",
+   "chem_kind",
+   "chem_lang",
+   "chem_datatype",
+   "gene",
+   "gene_kind",
+   "gene_lang",
+   "gene_datatype"
+  ],
+  "completeness": {
+   "complete": true,
+   "incomplete_because": [],
+   "truncation_reasons": []
+  },
+  "content_hash": "sha256:46c9ab682e562acd7697287e07fb40f8aec02737d6ce6b61de5b0cbcad3b927b",
+  "created": "2026-11-20T18:12:01Z",
+  "grade": "bundle",
+  "inputs": {
+   "http://example.org/affects": {
+    "kind": "asserted"
+   },
+   "inputs/chems.tsv": {
+    "kind": "external",
+    "path": "inputs/chems.tsv",
+    "sha256": "aaeef54be703807a5c4deb955239388ff7a0a15429540b38114cf41ddb0686c3"
+   }
+  },
+  "kind": "fetch",
+  "pattern": {
+   "o": "?gene",
+   "p": "<http://example.org/affects>",
+   "s": "?chem"
+  },
+  "requests": [
+   {
+    "bindings": 3,
+    "bytes_decoded": 1145,
+    "bytes_wire": 305,
+    "complete": true,
+    "continued": false,
+    "elapsed_ms": 0.845,
+    "method": "QUERY",
+    "request_id": "b22548a990ec39f5-0000000e",
+    "rows": 4,
+    "status": 200,
+    "stopped": null,
+    "truncation_reason": null,
+    "url": "http://127.0.0.1:56838/chemkg/v/2026-09-01/fragment"
+   }
+  ],
+  "rows": 4,
+  "shape": "bindings",
+  "sources": [
+   {
+    "content_digest": "sha256:2e1e9f086d737eaa2571ceec36bbb1bfaf329a4f8154ae0a0ad074647d20392c",
+    "dataset": "chemkg",
+    "dataset_iri": "https://example.org/kg/chemkg",
+    "grade": "bundle",
+    "kind": "kgf",
+    "origin": "http://127.0.0.1:56838",
+    "version": "2026-09-01"
+   }
+  ],
+  "step": 4,
+  "table": "affects",
+  "totals": {
+   "bindings_requests": 1,
+   "bytes_decoded": 1145,
+   "bytes_wire": 305,
+   "elapsed_ms": 0.845,
+   "requests": 1
+  }
+ },
+ "detail": {
+  "intent": {
+   "bindings": {
+    "distinct": 3,
+    "rows": 3,
+    "vars": [
+     "chem"
+    ]
+   },
+   "kind": "fetch",
+   "pattern": {
+    "o": "?gene",
+    "p": "<http://example.org/affects>",
+    "s": "?chem"
+   }
+  },
+  "plan": {
+   "approximations": [],
+   "caps": {
+    "max_bindings": 1000,
+    "max_limit": 10000
+   },
+   "completeness_expectation": "complete",
+   "estimated_requests": 1,
+   "estimated_rows": 0,
+   "evidence": {
+    "count": {
+     "exact": true,
+     "source": "inventory:predicate",
+     "value": 24
+    },
+    "r2": {
+     "bind_join_requests": 1,
+     "c": 24,
+     "column_fetch_requests": 1,
+     "k": 3
+    }
+   },
+   "intent": {
+    "bindings": {
+     "distinct": 3,
+     "rows": 3,
+     "vars": [
+      "chem"
+     ]
+    },
+    "kind": "fetch",
+    "pattern": {
+     "o": "?gene",
+     "p": "<http://example.org/affects>",
+     "s": "?chem"
+    }
+   },
+   "schema": "kgfq.plan/1",
+   "steps": [
+    {
+     "bindings": 3,
+     "estimated_requests": 1,
+     "estimated_rows": null,
+     "note": "R2: bind-join, \u23083/1000\u2309 \u2264 \u230824/10000\u2309",
+     "op": "bindings",
+     "pattern": {
+      "o": "?gene",
+      "p": "<http://example.org/affects>",
+      "s": "?chem"
+     }
+    }
+   ]
+  }
+ },
+ "schema": "kgf.receipt/1.0"
+}

@@ -42,6 +42,7 @@ def caps(e: Endpoint, **values: int) -> Iterator[None]:
 
 
 def fetched(e, rel, pattern, *, vars_=None, rows=None, max_rows=None, stats=None):
+    """The plan, the table, and the receipt's core, which is what these tests read."""
     with e.trace() as t:
         plan = plan_fetch(e, rel, pattern, vars_=vars_, rows=rows, stats=stats)
         table = execute_fetch(e, rel, pattern, plan, vars_=vars_, rows=rows, max_rows=max_rows)
@@ -54,7 +55,7 @@ def fetched(e, rel, pattern, *, vars_=None, rows=None, max_rows=None, stats=None
             trace=t,
             pattern=pattern.as_body(),
         )
-    return plan, table, receipt
+    return plan, table, receipt["core"]
 
 
 def pages(receipt):
@@ -132,8 +133,12 @@ def test_fetch_to_workspace_with_receipt(ep, tmp_path):
     assert set(table["s_kind"].to_pylist()) == {"iri"}
     assert set(table["o_kind"].to_pylist()) == {"literal"}
     assert set(table["o_lang"].to_pylist()) == {"en"}
-    r = ws.read_receipt("labels")
-    assert r["grade"] == "bundle" and r["source"]["content_digest"] == rel.content_digest
+    filed = ws.read_receipt("labels")
+    assert filed["schema"] == "kgf.receipt/1.0" and filed["detail"]["plan"] == plan.as_dict()
+    r = filed["core"]
+    [source] = r["sources"]
+    assert r["grade"] == "bundle" and source["content_digest"] == rel.content_digest
+    assert source["kind"] == "kgf" and source["origin"] == ep.origin
     assert r["shape"] == "bindings" and r["pattern"] == {
         "s": "?s",
         "p": "<http://www.w3.org/2000/01/rdf-schema#label>",

@@ -1,0 +1,415 @@
+# The operation registry of the KGF session format (notes/session-format.md §6).
+#
+# A log record names its operation, and a name means one thing in every client. An entry says
+# what the operation means and what its arguments are; it does not oblige a client to
+# implement it. An operation only one client has is still here, so its name is never reused
+# and never renamed when another client catches up.
+#
+# - `args` is a JSON Schema (2020-12) for the record's `args`, in the registry's spelling
+#   whatever the surface took: a command line's flags and a model's tool input log alike.
+#   Nothing is closed: a client may log arguments this does not list, and a reader keeps them.
+# - `implemented_by` maps each client that has the operation to the name it goes by there.
+#   The registry's name is the explorer's where the explorer has the operation, since its
+#   names are the ones models were measured on (its D18).
+# - `table` is the shape of the table the operation writes, where that is settled
+#   (docs/session/receipt.schema.json). The shape of a listing is open (§11).
+#
+# Shared argument conventions:
+# - `graph` is a graph's id; `graphs` a list of them. kgfq also takes `id@origin`.
+# - `subject`, `predicate`, `object` are one pattern's positions, each a term in doc 03 §3.3
+#   syntax with IRIs bracketed (`<http://…>`, `"asthma"@en`, `"42"^^<…#integer>`), or
+#   `?name` for a variable, or left out for an unnamed one.
+# - `bind` gives pattern variables the distinct values of an earlier table's columns:
+#   `{table: t4, columns: {zip: postal}}` binds `?zip` to t4's column `postal`.
+# - An `iri` outside a pattern is absolute and bare, as it appears in a table.
+
+schema: kgf.operations/1.0
+
+definitions:
+  position: &position
+    type: string
+  bind: &bind
+    type: object
+    required: [table, columns]
+    properties:
+      table: {type: string}
+      columns: {type: object, additionalProperties: {type: string}}
+  graphs: &graphs
+    type: array
+    items: {type: string}
+    minItems: 1
+  limit: &limit
+    type: integer
+    minimum: 1
+  direction: &direction
+    type: string
+    enum: [out, in]
+
+operations:
+
+  list_graphs:
+    meaning: >-
+      Every graph the session can reach: id, title, size in triples, and the release pinned
+      for it. kgfq lists every graph on every endpoint of the workspace, never grouped by
+      server.
+    args:
+      type: object
+      properties:
+        text: {type: string, description: "kgfq: a substring of id, title or description."}
+    implemented_by: {kgf-explorer: list_graphs, kgfq: datasets}
+
+  graph_summary:
+    meaning: >-
+      The graph's summary card, written by its server from its statistics: description,
+      counts, the largest classes and predicates, the leading relations, the namespaces.
+    args:
+      type: object
+      required: [graph]
+      properties:
+        graph: {type: string}
+        format: {type: string, enum: [md, json], description: "kgfq: the card's format."}
+    implemented_by: {kgf-explorer: graph_summary, kgfq: summary}
+
+  schema:
+    meaning: >-
+      One bounded edge of a graph's schema, computed by the server from the data. With only
+      the graph, its classes with entity counts; with a class, the predicates its entities
+      use; with a class and a predicate, the classes and datatypes of the objects.
+    args:
+      type: object
+      required: [graph]
+      properties:
+        graph: {type: string}
+        class: {type: string, description: "A class IRI, absolute and bare."}
+        predicate: {type: string, description: "A predicate IRI, absolute and bare."}
+        datatype: {type: string, description: "kgfq: a datatype IRI."}
+        children: {type: string, description: "kgfq: the collection to list beneath the node."}
+        projection: {type: string, enum: [class-properties, class-relations], description: "kgfq."}
+        view: {type: string, enum: [design, queryable], description: "kgfq."}
+        limit: {type: integer, minimum: 1, description: "kgfq: items a page."}
+        all: {type: boolean, description: "kgfq: every page followed."}
+    implemented_by: {kgf-explorer: schema, kgfq: schema}
+
+  search:
+    meaning: >-
+      Full-text search over one graph's literals, labels first: subjects with their label
+      and the literal that matched. How a name becomes an IRI.
+    args:
+      type: object
+      required: [graph, text]
+      properties:
+        graph: {type: string}
+        text: {type: string}
+        limit: *limit
+    implemented_by: {kgf-explorer: search}
+
+  count:
+    meaning: >-
+      The exact number of triples matching one pattern, from each graph's index. Under
+      bindings, one count per input tuple. The explorer asks many graphs and keeps those with
+      matches; kgfq asks one.
+    args:
+      type: object
+      properties:
+        graphs: *graphs
+        subject: *position
+        predicate: *position
+        object: *position
+        bind: *bind
+        values: {type: string, description: "kgfq: a bindings file, classified in the record's inputs."}
+    implemented_by: {kgf-explorer: count, kgfq: count}
+
+  sample:
+    meaning: >-
+      A seeded sample of the triples matching one pattern, deterministic per seed and
+      release. For seeing the shape of values, never for planning.
+    args:
+      type: object
+      required: [graph]
+      properties:
+        graph: {type: string}
+        subject: *position
+        predicate: *position
+        object: *position
+        n: {type: integer, minimum: 1}
+        seed: {type: integer}
+    implemented_by: {kgfq: sample}
+
+  distinct:
+    meaning: >-
+      The distinct values one position of a pattern takes, each with the triples holding it,
+      and under bindings the input tuples that reached it (doc 03 §3.4.13). Reads no triples.
+    args:
+      type: object
+      required: [graph, by]
+      properties:
+        graph: {type: string}
+        subject: *position
+        predicate: *position
+        object: *position
+        by: {type: string, enum: [s, p, o], description: "The grouped position."}
+        values: {type: string, description: "A bindings file, classified in the record's inputs."}
+        limit: {type: integer, minimum: 1, description: "Groups a page."}
+        top: {type: integer, minimum: 1, description: "Only the largest values are shown; the answer is still whole."}
+    implemented_by: {kgfq: distinct}
+
+  fetch:
+    meaning: >-
+      Every triple matching one pattern in one graph, as a table whose columns are the
+      pattern's variables. Under bindings, the rows the input tuples reach. A constant has
+      no column; the receipt's pattern keeps it.
+    args:
+      type: object
+      required: [graph]
+      properties:
+        graph: {type: string}
+        subject: *position
+        predicate: *position
+        object: *position
+        bind: *bind
+        values: {type: string, description: "kgfq: a bindings file, classified in the record's inputs."}
+        max_rows: {type: integer, minimum: 1, description: "kgfq: stop here; an approximation in the receipt when rows were left."}
+        out: {type: string, description: "kgfq: the table's name, or a .parquet, .csv or .json path."}
+    table: bindings
+    implemented_by: {kgf-explorer: fetch, kgfq: fetch}
+
+  describe:
+    meaning: "Every triple with this IRI as subject: its properties and values."
+    args:
+      type: object
+      required: [graphs, iri]
+      properties: {graphs: *graphs, iri: {type: string}, limit: *limit}
+    table: bindings
+    implemented_by: {kgf-explorer: describe}
+
+  incoming:
+    meaning: "Every triple with this IRI as object: what points at it, and by which predicate."
+    args:
+      type: object
+      required: [graphs, iri]
+      properties: {graphs: *graphs, iri: {type: string}, limit: *limit}
+    table: bindings
+    implemented_by: {kgf-explorer: incoming}
+
+  instances:
+    meaning: "The members of a class, by rdf:type."
+    args:
+      type: object
+      required: [graphs, class]
+      properties: {graphs: *graphs, class: {type: string}, limit: *limit}
+    table: bindings
+    implemented_by: {kgf-explorer: instances}
+
+  neighbors:
+    meaning: "The nodes one predicate reaches from an entity, forwards or backwards."
+    args:
+      type: object
+      required: [graphs, iri, predicate]
+      properties:
+        graphs: *graphs
+        iri: {type: string}
+        predicate: {type: string}
+        direction: *direction
+        limit: *limit
+    table: bindings
+    implemented_by: {kgf-explorer: neighbors}
+
+  two_hop:
+    meaning: >-
+      Two predicates followed from an entity through a middle node. With two graphs each hop
+      can come from a different one: a cross-graph join on the middle node's IRI.
+    args:
+      type: object
+      required: [graphs, start, predicate1, predicate2]
+      properties:
+        graphs: *graphs
+        start: {type: string}
+        predicate1: {type: string}
+        direction1: *direction
+        predicate2: {type: string}
+        direction2: *direction
+        limit: *limit
+    table: bindings
+    implemented_by: {kgf-explorer: two_hop}
+
+  where:
+    meaning: >-
+      Every graph that holds an entity, under each identifier for it: the IRI given, the
+      identifiers the `babel` graph lists as the same thing, and IRIs labeled with the same
+      words, which share a name and are not checked to be the same thing.
+    args:
+      type: object
+      required: [iri]
+      properties: {iri: {type: string}}
+    implemented_by: {kgf-explorer: where}
+
+  connections:
+    meaning: >-
+      Everything that links one entity in each graph that holds it: every predicate it has
+      as subject and as object, with its triple count, and for the largest what is at the
+      other end.
+    args:
+      type: object
+      required: [iri]
+      properties: {iri: {type: string}, graphs: *graphs}
+    implemented_by: {kgf-explorer: connections}
+
+  terms:
+    meaning: >-
+      Which graphs use a namespace, from each graph's term dictionary: the exact number of
+      distinct IRIs under each prefix as subject, predicate and object. With `list`, the
+      terms themselves.
+    args:
+      type: object
+      required: [prefixes]
+      properties:
+        prefixes: {type: array, items: {type: string}, minItems: 1, maxItems: 8}
+        graphs: *graphs
+        list: {type: integer, minimum: 1}
+        role: {type: string, enum: [any, subject, predicate, object]}
+    implemented_by: {kgf-explorer: terms}
+
+  overlap:
+    meaning: >-
+      Whether two to four graphs hold the same IRIs, both ways: each graph's own namespaces
+      counted in each of the others.
+    args:
+      type: object
+      required: [graphs]
+      properties:
+        graphs: {type: array, items: {type: string}, minItems: 2, maxItems: 4}
+    implemented_by: {kgf-explorer: overlap}
+
+  labels:
+    meaning: >-
+      One label per IRI in a column of an earlier table, as a new table to join: for when
+      names must be part of the data. Each graph picks the label by its own declared label
+      predicates.
+    args:
+      type: object
+      required: [table, column]
+      properties:
+        table: {type: string}
+        column: {type: string}
+        graphs: *graphs
+    implemented_by: {kgf-explorer: labels}
+
+  sql:
+    meaning: >-
+      One SELECT over the session's tables, in a DuckDB that can read nothing else. The
+      result is a new table, graded as the weakest of the tables it read.
+    args:
+      type: object
+      required: [query]
+      properties: {query: {type: string}}
+    table: bindings
+    implemented_by: {kgf-explorer: sql}
+
+  read_table:
+    meaning: "Rows of an earlier table, a page at a time, for a reader that was shown a preview."
+    args:
+      type: object
+      required: [table]
+      properties:
+        table: {type: string}
+        offset: {type: integer, minimum: 0}
+        limit: *limit
+    implemented_by: {kgf-explorer: read_table}
+
+  sparql:
+    meaning: >-
+      One SPARQL query answered completely or aborted at a named budget, by kgf-sparql,
+      never approximated. The query is a file's and never a model's (kgfq D2, D16). SELECT
+      leaves a bindings table, CONSTRUCT and DESCRIBE a triples table, ASK none.
+    args:
+      type: object
+      required: [file]
+      properties:
+        file: {type: string}
+        graphs: *graphs
+        sparql_endpoints: {type: array, items: {type: string}}
+        out: {type: string}
+        budget: {type: object}
+        http_retries: {type: integer}
+        normalize: {type: boolean}
+        threshold: {type: integer}
+        force: {type: boolean}
+    implemented_by: {kgfq: sparql}
+
+  map:
+    meaning: >-
+      A map of where the graphs hold what a question is about: paths from an entity, a
+      value or a class, each step one predicate or class in one graph. The model submits it
+      and the page runs it (kgf-explorer D19).
+    args:
+      type: object
+      required: [outcome]
+      properties:
+        outcome: {type: string, enum: [found, not_covered]}
+        paths: {type: array}
+        checked: {type: array, items: {type: string}}
+    implemented_by: {kgf-explorer: map}
+
+  # Guided mode (kgf-explorer D16). Arguments name handles the session gave out
+  # (e1, s2, c3), so a record of one is not a script without the records before it.
+
+  graphs:
+    meaning: "Guided mode: the graphs, ranked by size."
+    args: {type: object}
+    implemented_by: {kgf-explorer: graphs}
+
+  find:
+    meaning: "Guided mode: things by name, in one graph or every graph, as handles."
+    args:
+      type: object
+      required: [text]
+      properties: {text: {type: string}, graph: {type: string}}
+    implemented_by: {kgf-explorer: find}
+
+  classes:
+    meaning: "Guided mode: a graph's classes, as handles."
+    args:
+      type: object
+      required: [graph]
+      properties: {graph: {type: string}}
+    implemented_by: {kgf-explorer: classes}
+
+  members:
+    meaning: "Guided mode: a class's members, as a set handle."
+    args:
+      type: object
+      required: [class]
+      properties: {class: {type: string}}
+    implemented_by: {kgf-explorer: members}
+
+  links:
+    meaning: "Guided mode: the numbered links of an entity, a set or a class."
+    args:
+      type: object
+      required: [of]
+      properties: {of: {type: string}, graph: {type: string}}
+    implemented_by: {kgf-explorer: links}
+
+  follow:
+    meaning: "Guided mode: one numbered link followed from a handle."
+    args:
+      type: object
+      required: [from, link]
+      properties: {from: {type: string}, link: {type: integer, minimum: 1}}
+    implemented_by: {kgf-explorer: follow}
+
+  common:
+    meaning: "Guided mode: what two sets share."
+    args:
+      type: object
+      required: [a, b]
+      properties: {a: {type: string}, b: {type: string}}
+    implemented_by: {kgf-explorer: common}
+
+  narrow:
+    meaning: "Guided mode: a set kept to one source or class."
+    args:
+      type: object
+      required: [set, to]
+      properties: {set: {type: string}, to: {type: string}}
+    implemented_by: {kgf-explorer: narrow}

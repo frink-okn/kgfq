@@ -342,7 +342,8 @@ kgfq/
     cli/                  the CLI
   skills/kgf-integration/ the agent skill
   bench/                  harness, corpora pins, frozen baselines (registry_corpus.py and its runs)
-  docs/                   plan, receipt, intent and log-record schemas, author guide
+  docs/                   plan schema, author guide; session/ — the format shared with
+                          ../kgf-explorer: log envelope, receipt, operation registry
   notes/                  this file
 ```
 
@@ -708,6 +709,29 @@ pattern over the `.nt` the bundle was built from: equal, one line a row. An IRI 
 N-Triples' `IRIREF` cannot hold (a space, a brace) is written with `\uXXXX`, so a graph's
 malformed IRI is still one parseable line.
 
+*Changed 2026-11-20 — a receipt is a shared core and the operation's detail*
+(`notes/session-format.md` §5; `kgf.receipt/1.0`, `docs/session/receipt.schema.json`,
+which replaces `docs/receipt.schema.json`). `core` is what any client reads the same way:
+kind, step, grade, sources, the table (name, shape, pattern, columns, rows, content hash),
+completeness, totals, requests, approximations, inputs. `detail` is the operation's own:
+`fetch` keeps its intent and plan there, `sparql` its query, lint and normalization record,
+outcome, budget, engine, `requests_by_shape` and the pointer to the engine's receipt. A
+client that does not implement the operation keeps the detail as it came. Decided while
+building:
+- A bundle read has `sources`, a list of one, where it had `source`: a step that reads two
+  graphs on two servers names both (D14), and one field does for every kind.
+- The schema closes only the major version. `kgf.receipt/1.7` with fields kgfq has never
+  seen validates, loads, classifies and exports (`tests/test_session_format.py`); `2.0`
+  does not validate.
+- The footer is a table's receipt of record, under `kgf.receipt`: `read_receipt` reads it,
+  and a sidecar only where there is no table. It had preferred the sidecar, which can be
+  edited apart from the rows and which a session another client wrote need not have. The
+  sidecar is still written, for `cat` and `jq`, and is all a step without a table leaves.
+- A `sparql` receipt's core has no request list; the list is the engine receipt's, as
+  decided 2026-09-10. `totals.schema_requests` moved to `detail.statistics`, where the
+  engine reports it.
+- `jsonschema` is a development dependency: every receipt the tests write is validated.
+
 *Changed 2026-11-20 — the content hash is specified.* It was SHA-256 over each row as
 compact JSON, the rows sorted as Python strings: defined by this implementation, and not
 reproducible in JavaScript, which orders strings by UTF-16 unit and spells JSON escapes and
@@ -760,11 +784,12 @@ contend for a writer lock.
 
 ### C9. The workspace and the log
 
-*Proposed 2026-11-20* (`notes/session-format.md`, issue #3): one session format shared with
-`../kgf-explorer` — an envelope every reader understands, per-operation payloads, an operation
-registry, shared fixtures. It would replace `kgfq.log/1` and `kgfq.receipt/3`, change C6's
-fetched-table columns to the pattern's variables, and put `kgfq-mcp` (§7) after parity with the
-explorer's operations. Not decided; this unit and C6 stand until it is.
+*Proposed and accepted 2026-11-20* (`notes/session-format.md`, issue #3): one session format
+shared with `../kgf-explorer` — an envelope every reader understands, per-operation payloads,
+an operation registry, shared fixtures. It replaces `kgfq.log/1` and `kgfq.receipt/3`, changes
+C6's fetched-table columns to the pattern's variables, and puts `kgfq-mcp` (§7) after parity
+with the explorer's operations. What landed is recorded here and under C6; where this unit's
+text below says otherwise, the dated notes are later.
 
 The directory an analysis lives in (D15): the current directory, or `--workspace`.
 
@@ -790,6 +815,46 @@ costs nothing, and needs no cooperation from the model — the property `mcp-okn
 record lacked when it asked the model to flag exploratory queries and not to paste
 looked-up constants (doc 12 §12.5.4). The library writes the log; both skins inherit
 it; the MCP server's workspace is its working directory or `KGFQ_WORKSPACE`.
+
+*Changed 2026-11-20 — a log record is a `kgf.session/1.0` envelope*
+(`notes/session-format.md` §3; `docs/session/envelope.schema.json`, which replaces
+`docs/log-record.schema.json`). What changed in a record:
+- `skin` is `client: {name, version, surface}`, and `actor` says who asked: `user`,
+  `assistant`, or null where the surface cannot tell. A command line is typed by a person
+  or by an agent alike, so the CLI writes null; `kgfq-mcp` will write `assistant`.
+- `command` is `operation`, a name from the registry, and `args` are spelled as the
+  registry spells them, not as the command line took them: `kgfq summary chemkg` logs
+  `graph_summary` with `{graph: chemkg}`; a pattern is `subject`, `predicate`, `object`,
+  each left out when unnamed.
+- `output` is `outputs`, the tables the step wrote, each with its shape, rows, grade and
+  content hash, and `result`, what a step answered without a table: a count, an ASK, how a
+  run ended.
+- `receipt` is the receipt whole, where it was a summary: the one the table's footer
+  carries, and the only copy for a step with no table. `summary`, `schema`, `count`,
+  `sample` and `distinct` get a real receipt (`request_receipt`), with every request and
+  its `KGF-Request-Id`, where they had a request count. `plan` is no longer a field of the
+  record: it is in the receipt's detail, which is where C10 will read it.
+- `time` is gone; `started` and `elapsed_ms` say the same.
+
+*Verified by:* `tests/test_session_format.py`. Every record eight commands and a SPARQL run
+write is validated as an envelope, names an operation the registry says kgfq has, carries
+arguments the registry's schema accepts and no other, and a receipt that validates and
+equals its table's footer; two steps against two servers each name the origin they read. A
+record as the explorer would write it, for an operation kgfq does not have, validates.
+Unchanged, and to settle (`notes/session-format.md` §11): a step a server refuses, or kgfq
+refuses before any request, writes no record; `datasets` writes none either.
+
+*Landed 2026-11-20 — the format's fixture.* `docs/session/fixtures/kgfq/` is a seven-step
+session kgfq wrote against the two fixture servers, kept so that a second client has
+something real to read: the log, four tables, and the triples each stands for. Its README
+says what a reader must be able to do with it. `tests/test_session_fixture.py` reads it
+with no server (schemas, hashes, `triples()`), and reruns its commands to hold that it is
+still what kgfq writes; `KGFQ_WRITE_FIXTURE=1` rewrites it when the format changes on
+purpose.
+
+*Fixed 2026-11-20:* a derived value names the step that first held it. `classify_values`
+read tables in name order, so a chemical in both `chems` (step 3) and `affects` (step 4)
+was said to come from step 4. It reads them in step order.
 
 `kgfq import <file | url> --from "<description>"` is the one door for data from
 anywhere else (D17): another MCP server's result the agent saved to a file, a CSV

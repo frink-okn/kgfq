@@ -33,14 +33,15 @@ def triples(table: pa.Table, receipt: Mapping[str, Any]) -> pa.Table:
     """The triples ``table`` stands for, under :data:`TRIPLE_COLUMNS`, in the
     table's row order. A ``triples`` table is its own answer; a ``bindings``
     table needs the one pattern it answers, from its receipt."""
-    name = receipt.get("table") or "the table"
-    shape = receipt.get("shape")
+    core = receipt["core"]
+    name = core.get("table") or "the table"
+    shape = core.get("shape")
     if shape == "triples":
         return table.select(TRIPLE_COLUMNS)
-    pattern = receipt.get("pattern")
+    pattern = core.get("pattern")
     if shape != "bindings" or not pattern:
         raise WorkspaceError(
-            f"{name} answers no single pattern (shape {shape!r}, kind {receipt.get('kind')!r}), "
+            f"{name} answers no single pattern (shape {shape!r}, kind {core.get('kind')!r}), "
             "so its rows are not triples: a SELECT or SQL result joins several"
         )
     n = table.num_rows

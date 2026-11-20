@@ -13,12 +13,11 @@ import dataclasses
 import hashlib
 import json
 import sys
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import pyarrow as pa
-import pyarrow.parquet as pq
 
 from .. import __version__
 from ..client.endpoint import Endpoint, Pattern, Release
@@ -48,8 +47,8 @@ from ..sparql import (
     sparql_receipt,
 )
 from ..workspace.log import Step
-from ..workspace.receipts import fetch_receipt
-from ..workspace.store import Workspace, WorkspaceError
+from ..workspace.receipts import fetch_receipt, request_receipt
+from ..workspace.store import Workspace, WorkspaceError, stamped, write_parquet
 from ..workspace.triples import triples, write_ntriples
 
 DEFAULT_PREFIXES = {
@@ -119,9 +118,11 @@ class Cli:
     def stats(self, ep: Endpoint, rel: Release) -> Statistics:
         return Statistics(self.workspace, ep, rel)
 
-    def step(self, command: str, **args: Any) -> Step:
+    def step(self, operation: str, **args: Any) -> Step:
+        """One log record, named and argued as the registry spells the operation
+        (``docs/session/operations.yaml``), not as the command line took it."""
         return Step(
-            self.workspace, "cli", command, {k: v for k, v in args.items() if v is not None}
+            self.workspace, "cli", operation, {k: v for k, v in args.items() if v is not None}
         )
 
     # -- commands -------------------------------------------------------------
@@ -161,11 +162,11 @@ class Cli:
 
     def summary(self) -> int:
         ep, rel = self.resolve(self.args.dataset)
-        step = self.step("summary", dataset=self.args.dataset, format=self.args.format)
+        step = self.step("graph_summary", graph=self.args.dataset, format=self.args.format)
         step.pin(_pin(ep, rel))
         with ep.trace() as t:
             card = ep.summary(rel, self.args.format)
-        step.receipt({"requests": t.requests, "request_ids": t.request_ids})
+        step.receipt(request_receipt(step=step.step, kind="graph_summary", release=rel, trace=t))
         step.finish()
         if self.args.format == "md":
             self.out.write(card if card.endswith("\n") else card + "\n")
@@ -178,17 +179,21 @@ class Cli:
         ep, rel = self.resolve(a.dataset)
         prefixes = self.prefixes(ep, rel)
         params: dict[str, Any] = {}
+        logged: dict[str, Any] = {}
         for key in ("class", "predicate", "datatype", "children", "projection", "view"):
             value = getattr(a, key.replace("-", "_"), None)
-            if value:
-                params[key] = (
-                    format_term(parse_term(value, prefixes))
-                    if key in ("class", "predicate", "datatype")
-                    else value
-                )
+            if not value:
+                continue
+            if key in ("class", "predicate", "datatype"):
+                term = parse_term(value, prefixes)
+                params[key] = format_term(term)
+                # the registry's schema arguments are IRIs, absolute and bare
+                logged[key] = term.value if isinstance(term, Iri) else format_term(term)
+            else:
+                params[key] = logged[key] = value
         if a.limit:
-            params["limit"] = a.limit
-        step = self.step("schema", dataset=a.dataset, params=params, all=a.all)
+            params["limit"] = logged["limit"] = a.limit
+        step = self.step("schema", graph=a.dataset, **logged, all=a.all or None)
         step.pin(_pin(ep, rel))
         inventory = (
             a.all
@@ -216,7 +221,8 @@ class Cli:
                 body["next"] = None
             else:
                 body = ep.schema_page(rel, params).body
-        step.receipt({"requests": t.requests, "request_ids": t.request_ids})
+        step.receipt(request_receipt(step=step.step, kind="schema", release=rel, trace=t))
+        step.result(items=len(body.get("items", [])), complete=body.get("complete"))
         step.finish()
         rows = []
         for item in body.get("items", []):
@@ -238,7 +244,7 @@ class Cli:
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
         vars_, rows = self.values(ep, rel, a.values)
-        step = self.step("count", dataset=a.dataset, pattern=pattern.as_body(), values=a.values)
+        step = self.step("count", graphs=[a.dataset], **_positions(pattern), values=a.values)
         step.pin(_pin(ep, rel))
         step.input_values(_bound_values(pattern))
         if a.values:
@@ -271,10 +277,8 @@ class Cli:
                     for i, (r, c) in enumerate(zip(rows, counts, strict=True))
                 ]
                 header = ["binding", "row", "count"]
-        step.receipt(
-            {"requests": t.requests, "request_ids": t.request_ids, "bytes_wire": t.bytes_wire}
-        )
-        step.output(**payload if rows is None else {"total": payload["total"]})
+        step.receipt(request_receipt(step=step.step, kind="count", release=rel, trace=t))
+        step.result(**payload if rows is None else {"total": payload["total"]})
         step.finish()
         self.emit(payload, table=table, header=header)
         return 0
@@ -283,12 +287,12 @@ class Cli:
         a = self.args
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
-        step = self.step("sample", dataset=a.dataset, pattern=pattern.as_body(), n=a.n, seed=a.seed)
+        step = self.step("sample", graph=a.dataset, **_positions(pattern), n=a.n, seed=a.seed)
         step.pin(_pin(ep, rel))
         with ep.trace() as t:
             rows = ep.sample(rel, pattern, n=a.n, seed=a.seed)
-        step.receipt({"requests": t.requests, "request_ids": t.request_ids})
-        step.output(rows=len(rows))
+        step.receipt(request_receipt(step=step.step, kind="sample", release=rel, trace=t))
+        step.result(rows=len(rows))
         step.finish()
         names = list(pattern.variables().values())
         payload = {
@@ -314,10 +318,12 @@ class Cli:
         vars_, rows = self.values(ep, rel, a.values)
         step = self.step(
             "distinct",
-            dataset=a.dataset,
-            pattern=pattern.as_body(),
-            group_by=a.by,
+            graph=a.dataset,
+            **_positions(pattern),
+            by=a.by,
             values=a.values,
+            limit=a.limit,
+            top=a.top,
         )
         step.pin(_pin(ep, rel))
         step.input_values(_bound_values(pattern))
@@ -344,10 +350,8 @@ class Cli:
         }
         if a.top is not None:
             payload["top"] = a.top
-        step.receipt(
-            {"requests": t.requests, "request_ids": t.request_ids, "bytes_wire": t.bytes_wire}
-        )
-        step.output(distinct=len(answer.values), triples=answer.triples)
+        step.receipt(request_receipt(step=step.step, kind="distinct", release=rel, trace=t))
+        step.result(distinct=len(answer.values), triples=answer.triples)
         step.finish()
         with_bindings = rows is not None
         self.emit(
@@ -377,11 +381,11 @@ class Cli:
         out = a.out or _default_table_name(pattern)
         step = self.step(
             "fetch",
-            dataset=a.dataset,
-            pattern=pattern.as_body(),
+            graph=a.dataset,
+            **_positions(pattern),
             values=a.values,
-            out=out,
             max_rows=a.max_rows,
+            out=out,
         )
         step.pin(_pin(ep, rel))
         inputs = step.input_values(_bound_values(pattern))
@@ -408,25 +412,20 @@ class Cli:
                 approximations=approximations,
                 inputs=inputs,
             )
-        step.plan(plan.as_dict())
         info = write_output(self.workspace, out, table, receipt)
-        step.receipt({k: receipt[k] for k in ("totals", "completeness", "approximations", "grade")})
-        step.output(
-            table=info["table"],
-            path=info["path"],
-            rows=table.num_rows,
-            content_hash=info["content_hash"],
-        )
+        core = info["receipt"]["core"]
+        step.receipt(info["receipt"])
+        step.table(info["receipt"], path=None if info["in_workspace"] else info["path"])
         step.finish()
         handle = {
             "table": info["table"],
             "path": info["path"],
             "rows": table.num_rows,
             "columns": table.column_names,
-            "grade": receipt["grade"],
-            "requests": receipt["totals"]["requests"],
-            "bytes_wire": receipt["totals"]["bytes_wire"],
-            "complete": receipt["completeness"]["complete"],
+            "grade": core["grade"],
+            "requests": core["totals"]["requests"],
+            "bytes_wire": core["totals"]["bytes_wire"],
+            "complete": core["completeness"]["complete"],
             "approximations": approximations,
             "step": step.step,
             "content_hash": info["content_hash"],
@@ -519,7 +518,7 @@ class Cli:
         step = self.step(
             "sparql",
             file=str(path),
-            datasets=datasets,
+            graphs=datasets or None,
             sparql_endpoints=endpoints or None,
             out=out,
             budget=budget.as_dict(),
@@ -631,27 +630,24 @@ class Cli:
             approximations=approximations,
             shape=shape,
         )
+        core, detail = receipt["core"], receipt["detail"]
         if read_error:
             contract = "error"
-            receipt["outcome"] = {**receipt["outcome"], "contract": "error", "error": read_error}
-            receipt["completeness"].update(complete=False, incomplete_because=["error"])
-        error = receipt["outcome"].get("error") if contract == "error" else None
+            detail["outcome"] = {**detail["outcome"], "contract": "error", "error": read_error}
+            core["completeness"].update(complete=False, incomplete_because=["error"])
+        error = detail["outcome"].get("error") if contract == "error" else None
         if table is not None:
             info = self.workspace.write_table(out, table, receipt)
             receipt = info.receipt
-            step.output(
-                table=info.name,
-                path=str(info.path),
-                rows=info.rows,
-                content_hash=info.content_hash,
-                contract=contract,
-            )
+            core = receipt["core"]
+            step.table(receipt)
+            step.result(contract=contract)
         else:
             replaced = self.workspace.remove_table(out)
             self.workspace.write_receipt(out, receipt)
             produced: dict[str, Any] = {
                 "contract": contract,
-                "rows": receipt["outcome"].get("rows", 0),
+                "rows": detail["outcome"].get("rows", 0),
             }
             if boolean is not None:
                 produced["boolean"] = boolean
@@ -659,25 +655,8 @@ class Cli:
                 produced["budget"] = budget_name
             if replaced:
                 produced["replaced_table"] = out
-            step.output(**produced)
-        step.receipt(
-            {
-                **{
-                    k: receipt[k]
-                    for k in (
-                        "grade",
-                        "outcome",
-                        "totals",
-                        "budget",
-                        "completeness",
-                        "approximations",
-                        "engine_receipt",
-                    )
-                },
-                "lint": [d.code for d in diagnostics],
-                "normalizations": [n["rule"] for n in normalizations if n["applied"]],
-            }
-        )
+            step.result(**produced)
+        step.receipt(receipt)
         step.finish("error" if contract == "error" else "ok", error)
         for stale in (output, query_path):
             stale.unlink(missing_ok=True)
@@ -685,22 +664,22 @@ class Cli:
             "contract": contract,
             "table": out if table is not None else None,
             "path": str(self.workspace.table_path(out)) if table is not None else None,
-            "rows": table.num_rows if table is not None else receipt["outcome"].get("rows", 0),
+            "rows": table.num_rows if table is not None else detail["outcome"].get("rows", 0),
             "columns": table.column_names if table is not None else None,
             "boolean": boolean,
-            "grade": receipt["grade"],
+            "grade": core["grade"],
             "budget": budget_name,
-            "requests": receipt["totals"]["requests"],
-            "bindings_requests": receipt["totals"]["bindings_requests"],
-            "bytes_decoded": receipt["totals"]["bytes_decoded"],
-            "elapsed_ms": receipt["totals"]["elapsed_ms"],
+            "requests": core["totals"]["requests"],
+            "bindings_requests": core["totals"]["bindings_requests"],
+            "bytes_decoded": core["totals"]["bytes_decoded"],
+            "elapsed_ms": core["totals"]["elapsed_ms"],
             "lint": [d.code for d in diagnostics],
             "normalizations": normalizations,
             "approximations": approximations,
             "engine_receipt": pointer["path"] if pointer else None,
             "receipt": str(self.workspace.receipt_path(out)),
             "step": step.step,
-            "content_hash": receipt.get("content_hash"),
+            "content_hash": core.get("content_hash"),
             "error": error,
         }
         if not self.json and diagnostics:
@@ -752,10 +731,16 @@ class Cli:
         self.emit(
             {"steps": records},
             table=[
-                [r["step"], r["command"], r.get("status", ""), json.dumps(r.get("output", {}))[:80]]
+                [
+                    r["step"],
+                    r["operation"],
+                    r.get("status", ""),
+                    ", ".join(o["table"] for o in r.get("outputs", []))
+                    or json.dumps(r.get("result", {}))[:80],
+                ]
                 for r in records
             ],
-            header=["step", "command", "status", "output"],
+            header=["step", "operation", "status", "wrote"],
         )
         return 0
 
@@ -769,6 +754,16 @@ class Cli:
             header=["dataset", "version", "digest", "origin"],
         )
         return 0
+
+
+def _positions(pattern: Pattern) -> dict[str, str]:
+    """A pattern as the registry spells it in ``args``: each position a term in
+    doc 03 §3.3 syntax or its ``?variable``, and an unnamed one left out."""
+    return {
+        key: str(v) if isinstance(v, Var) else format_term(v)
+        for key, v in (("subject", pattern.s), ("predicate", pattern.p), ("object", pattern.o))
+        if v is not None
+    }
 
 
 def _bound_values(pattern: Pattern) -> list[str]:
@@ -886,27 +881,31 @@ def _term(text: str, prefixes: dict[str, str]) -> Term:
 
 
 def write_output(
-    ws: Workspace, out: str, table: pa.Table, receipt: dict[str, Any]
+    ws: Workspace, out: str, table: pa.Table, receipt: Mapping[str, Any]
 ) -> dict[str, Any]:
     """``--out name`` writes ``tables/name.parquet`` in the workspace; a path
     ending in .parquet/.csv/.json writes there, with the receipt beside it."""
     if "/" not in out and "." not in out:
         info = ws.write_table(out, table, receipt)
-        return {"table": info.name, "path": str(info.path), "content_hash": info.content_hash}
+        return {
+            "table": info.name,
+            "path": str(info.path),
+            "content_hash": info.content_hash,
+            "receipt": info.receipt,
+            "in_workspace": True,
+        }
     path = Path(out)
     path.parent.mkdir(parents=True, exist_ok=True)
     content_hash = ws.content_hash(table)
-    receipt = {
-        **receipt,
-        "table": path.stem,
-        "rows": table.num_rows,
-        "columns": table.column_names,
-        "content_hash": content_hash,
-    }
+    receipt = stamped(
+        receipt,
+        table=path.stem,
+        rows=table.num_rows,
+        columns=table.column_names,
+        content_hash=content_hash,
+    )
     if path.suffix == ".parquet":
-        meta = dict(table.schema.metadata or {})
-        meta[b"kgfq.receipt"] = json.dumps(receipt, sort_keys=True).encode()
-        pq.write_table(table.replace_schema_metadata(meta), path, compression="zstd")
+        write_parquet(path, table, receipt, name=path.stem)
     elif path.suffix == ".csv":
         with open(path, "w", newline="", encoding="utf-8") as f:
             w = csv.writer(f)
@@ -926,7 +925,13 @@ def write_output(
     path.with_name(path.stem + ".receipt.json").write_text(
         json.dumps(receipt, indent=1, sort_keys=True) + "\n"
     )
-    return {"table": path.stem, "path": str(path), "content_hash": content_hash}
+    return {
+        "table": path.stem,
+        "path": str(path),
+        "content_hash": content_hash,
+        "receipt": receipt,
+        "in_workspace": False,
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:

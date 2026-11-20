@@ -1,0 +1,7 @@
+<http://example.org/gene/G3> <http://example.org/inPathway> <http://example.org/pathway/P1> .
+<http://example.org/gene/G6> <http://example.org/inPathway> <http://example.org/pathway/P1> .
+<http://example.org/gene/G1> <http://example.org/inPathway> <http://example.org/pathway/P2> .
+<http://example.org/gene/G4> <http://example.org/inPathway> <http://example.org/pathway/P2> .
+<http://example.org/gene/G7> <http://example.org/inPathway> <http://example.org/pathway/P2> .
+<http://example.org/gene/G2> <http://example.org/inPathway> <http://example.org/pathway/P3> .
+<http://example.org/gene/G5> <http://example.org/inPathway> <http://example.org/pathway/P3> .

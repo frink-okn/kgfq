@@ -44,6 +44,10 @@ measured cost of a rule that exists twice is in kgfq §0.
 
 ## 3. The envelope
 
+*Landed in kgfq 2026-11-20* as `kgf.session/1.0` (`kgfq.workspace.log.Step`,
+`docs/session/envelope.schema.json`): every record kgfq writes is validated against it and
+against the registry in `tests/test_session_format.py`.
+
 | field | what it is |
 |---|---|
 | `schema` | `kgf.session/<major>.<minor>`. A reader accepts its own major and warns on a newer minor. |
@@ -55,10 +59,11 @@ measured cost of a rule that exists twice is in kgfq §0.
 | `args` | the operation's arguments, in its registry schema. Payload, not envelope: a reader that does not know the operation keeps them verbatim and shows them as JSON. |
 | `inputs` | each consumed value or table, classified `derived` (with `step` and `table`), `asserted`, or `external` (with `sha256`), as kgfq C9 does now. |
 | `pins` | every graph the step read: `origin`, `dataset`, `version`, `content_digest`, `dataset_iri`. |
-| `outputs` | tables the step wrote: `table`, `shape`, `rows`, `grade`, `content_hash`. Empty for a step that wrote none. |
+| `outputs` | tables the step wrote: `table`, `shape`, `rows`, `grade`, `content_hash`; `path` only for one written outside the session's `tables/`. Empty for a step that wrote none. |
+| `result` | what a step answered without a table: a count, an ASK, how a run ended. Payload, as `args` is. Added while building: kgfq's `count` writes no table, and its answer is the step's evidence. |
 | `status` | `ok` or `error`. |
 | `error` | the server's problem document (RFC 9457) verbatim, or the client's refusal as text when no request was made. |
-| `receipt` | `{core, detail}` (§5). |
+| `receipt` | `{schema, core, detail}` (§5), whole: the one the table's footer carries, or the only copy for a step with no table. |
 
 ```json
 {"schema": "kgf.session/1.0", "step": 4, "started": "2026-11-20T15:02:11Z", "elapsed_ms": 812,
@@ -176,6 +181,10 @@ whose values no row holds.
 
 ## 5. Receipts
 
+*Landed in kgfq 2026-11-20* as `kgf.receipt/1.0` (`kgfq.workspace.receipts.new_receipt`,
+`docs/session/receipt.schema.json`): `{schema, core, detail}`, validated on every receipt the
+tests write, and a receipt with an unknown operation and unknown fields read back whole.
+
 **Core**, shared, read by every client:
 
 - `kind` (the operation that wrote it), `step`, `created`.
@@ -188,8 +197,10 @@ whose values no row holds.
 - `sources`: each graph or endpoint read, graded, with the pin fields of §3.
 - `shape`, `columns`, `rows`, `content_hash`; `pattern` for a one-pattern `bindings` table.
 - `completeness`: `complete`, `incomplete_because`, as `kgfq.receipt/3` defines them.
-- `totals`: `requests`, `bindings_requests`, `bytes`, `elapsed_ms`.
-- `requests`: each with method, URL, status, bytes and `KGF-Request-Id`.
+- `totals`: `requests`, `bindings_requests`, `bytes_decoded`, `bytes_wire` (null where a
+  client cannot see the wire, as a page cannot), `elapsed_ms`.
+- `requests`: each with method, URL, status, bytes and `KGF-Request-Id`; absent where the
+  list is kept elsewhere and the detail points at it, as a SPARQL run's is.
 - `bindings`, for a bound step: `table`, `columns`, `sent`, `matched`, `unmatched`,
   `unmatched_sample` (kgfq C6's unmatched report, explorer D8).
 - `approximations`, and `inputs` for a derived table: the receipts of the tables it read, one
@@ -238,17 +249,19 @@ Why this shape:
 
 ## 6. The operation registry
 
-`docs/session/operations.yaml`, one entry per operation:
+`docs/session/operations.yaml`, one entry per operation. *Landed 2026-11-20* with the 33
+operations the two clients have between them (`tests/test_session_format.py` checks its
+form, and that each name kgfq is said to have is a command it runs).
 
 ```yaml
 fetch:
   meaning: >-
-    Every triple matching one pattern in one graph, as a bindings table whose columns are the
-    pattern's variables. With bind, variables take the distinct values of an earlier table's
-    columns.
+    Every triple matching one pattern in one graph, as a table whose columns are the
+    pattern's variables. Under bindings, the rows the input tuples reach. A constant has
+    no column; the receipt's pattern keeps it.
   args:                     # JSON Schema
     type: object
-    required: [graph, subject, predicate, object]
+    required: [graph]
     properties:
       graph: {type: string}
       subject: {type: string}
@@ -256,23 +269,42 @@ fetch:
       object: {type: string}
       bind:
         type: object
+        required: [table, columns]
         properties:
           table: {type: string}
           columns: {type: object, additionalProperties: {type: string}}
-      max_rows: {type: integer}
-  output: bindings
-  implemented_by: [kgf-explorer, kgfq]
-  replayable_by: [kgfq]     # once C10 lands
+      values: {type: string}      # kgfq: a bindings file
+      max_rows: {type: integer}   # kgfq
+      out: {type: string}         # kgfq
+  table: bindings
+  implemented_by: {kgf-explorer: fetch, kgfq: fetch}
 ```
 
-`implemented_by` and `replayable_by` are what the parity table (§8) is generated from, so the
-table cannot drift from the registry. The registry holds meaning and arguments, not tool
-descriptions: those are each surface's own and are measured by its own runs (explorer D18).
+Decided while writing it:
 
-Arguments follow the explorer's forms where both clients have the operation, since its forms
-are the ones models were measured on: `bind: {table, columns}` rather than a `--values` file.
-kgfq's CLI keeps `--values <file>` as a convenience, logged as the import of the file
-followed by the bound step.
+- **The names are the explorer's** where it has the operation: `list_graphs`,
+  `graph_summary`. Its names are the ones models were measured on (its D18), its tool list is
+  signed into the gate's manifest, and `kgfq-mcp`'s tools will want the same names for the
+  same reason. `implemented_by` maps each client to the name the operation goes by there, so
+  `kgfq summary` is logged as `graph_summary` and the command keeps its name.
+- **`graph`, not `dataset`**, and a pattern as `subject`, `predicate`, `object`: each a term
+  in doc 03 §3.3 syntax with IRIs bracketed, `?name`, or left out for an unnamed position.
+  A client logs that spelling whatever its surface took; the explorer, which accepts a bare
+  `http…` IRI in a pattern, brackets it on the way to the log.
+- **`bind: {table, columns}`** is the explorer's form and the registry's. kgfq has only
+  `--values <file>` until it has `bind` (§10 step 4); the registry lists `values` as kgfq's,
+  and the record's `inputs` classify the file. `import` (C9) will make the file a table.
+- **Nothing is closed.** A client may log an argument the registry does not list, and a
+  reader keeps it.
+- **No `replayable_by` yet.** Replay is per operation and per client (§2), and no client
+  replays anything until C10; the field arrives with it.
+- **`table`** is stated only where the shape is settled. A listing's is open (§11).
+- **`answer` and `import` are not registered**: neither is designed. An entry needs its
+  arguments.
+
+`implemented_by` is the parity record. §8 is a snapshot of it with the reasons beside each
+row; where they differ, the registry is right. The registry holds meaning and arguments, not
+tool descriptions: those are each surface's own and are measured by its own runs.
 
 ## 7. Today's records, mapped
 
@@ -295,10 +327,10 @@ followed by the bound step.
 
 Changes this asks of each:
 
-- **kgfq:** `skin` becomes `client`; `actor` is added; `command` becomes `operation` and
-  `args` takes registry spelling; the schema string changes; fetch tables become bindings
-  (§4.3); a receipt splits into core and detail. Workspaces written before this are not
-  read: none is being kept (2026-11-20).
+- **kgfq** (all landed 2026-11-20): `skin` becomes `client`; `actor` is added; `command`
+  becomes `operation` and `args` takes registry spelling; the schema string changes; fetch
+  tables become bindings (§4.3); a receipt splits into core and detail. Workspaces written
+  before this are not read: none is being kept.
 - **kgf-explorer:** the envelope fields its records lack (pins, inputs, outputs with hashes);
   the content hash; `status` separated from the receipt's contract; export and import (below).
   Its tables and its `bind` are unchanged.
@@ -316,14 +348,14 @@ model SQL could write the same path. Import is reading a registered buffer and n
 
 ## 8. Parity
 
-Proposed registry names, with where each operation lives today. The "kgfq" column means the
-library and CLI; `kgfq-mcp` follows the library.
+Registry names, with where each operation lives today. The "kgfq" column means the library
+and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the record (§6).
 
 | operation | kgf-explorer | kgfq | for parity |
 |---|---|---|---|
-| `datasets` | `list_graphs` (one server) | `datasets` (every origin) | have |
+| `list_graphs` | `list_graphs` (one server) | `datasets` (every origin) | have |
 | `endpoints` | a page setting, not a step | `endpoints` | kgfq only, by design (D14) |
-| `summary` | `graph_summary` | `summary` | have |
+| `graph_summary` | `graph_summary` | `summary` | have |
 | `schema` | graph, class, class+predicate | plus datatype, projection, view | have; args to reconcile |
 | `search` | one graph's `/search` | — (C7 `resolve` planned) | **kgfq needs** |
 | `count` | many graphs, bind from a table | one graph, `--values` | **kgfq needs** many graphs and `bind` |
@@ -352,7 +384,7 @@ Temporarily in this repository, since `../kgf-dev` and `../kgf-explorer` are pri
 ```
 docs/session/
   envelope.schema.json       §3
-  receipt-core.schema.json   §5
+  receipt.schema.json        §5: the core, and that there is a detail
   operations.yaml            §6
   fixtures/kgfq/             a small session kgfq wrote: log, tables, receipts
   fixtures/kgf-explorer/     a small session the explorer exported
@@ -363,16 +395,24 @@ fixture, and reproduce its content hashes and `triples()`. The explorer has no t
 (its §3 item 2); a Node script doing this is its first test. The explorer cites this
 directory by commit until it moves.
 
+*Landed 2026-11-20:* `fixtures/kgfq/`, seven steps against the two fixture servers, with
+`expected/<table>.nt` holding the triples each table stands for, and a README saying what a
+reader must be able to do with it and what each step is there to show. Its log is 18 kB and
+its four tables 8 kB each. `tests/test_session_fixture.py` reads it with no server, and
+reruns its commands against fresh servers to hold that it is still what kgfq writes,
+comparing everything but times, request ids, ports and the bundle's digest.
+`fixtures/kgf-explorer/` waits for the explorer's export (§10 step 6).
+
 Opening a session: a zip of the workspace, a chosen directory, or
 `?session=<url>` naming a zip the user put somewhere. Sharing is passing the file.
 
 ## 10. Sequence
 
-1. This note, agreed.
-2. `docs/session/`: the schemas, the registry from §8, and a kgfq fixture.
+1. This note, agreed. *Done 2026-11-20.*
+2. `docs/session/`: the schemas, the registry from §8, and a kgfq fixture. *Done 2026-11-20.*
 3. kgfq writes `kgf.session/1`: the envelope, receipt core and detail, bindings fetch tables
    (C6 changed), the specified hash, `triples()` behind `kgfq export`. No reader for
-   `kgfq.log/1`: no workspace written before this is being kept (2026-11-20).
+   `kgfq.log/1`: no workspace written before this is being kept. *Done 2026-11-20.*
 4. kgfq parity, one operation at a time, in the order a harness needs them: `bind` for
    `fetch` and `count`, `sql` (C8), `read_table`, `labels`, `search`, the template operations,
    `count` over many graphs, `terms`, `overlap`, `connections`, `where`, `answer`.
@@ -381,6 +421,11 @@ Opening a session: a zip of the workspace, a chosen directory, or
 
 ## 11. Open, and later
 
+- **A refused step.** kgfq writes no record for a step a server refuses, or that it
+  refuses itself before any request; the explorer records both. An agent's failed attempts
+  are part of what happened, and the envelope has `status` and `error` for them.
+- **`list_graphs` as a step.** `kgfq datasets` writes no record; the explorer's
+  `list_graphs` does.
 - **Multi-server sessions in the explorer.** It talks to one server. Loading a kgfq session
   whose graphs live on two servers needs it to hold several; after kgfq reaches parity, so
   that the two clients do not change at once.

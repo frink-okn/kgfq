@@ -1,0 +1,138 @@
+{
+ "core": {
+  "approximations": [],
+  "columns": [
+   "gene",
+   "gene_kind",
+   "gene_lang",
+   "gene_datatype",
+   "pathway",
+   "pathway_kind",
+   "pathway_lang",
+   "pathway_datatype"
+  ],
+  "completeness": {
+   "complete": true,
+   "incomplete_because": [],
+   "truncation_reasons": []
+  },
+  "content_hash": "sha256:4cc5e49b27fbbdf36be16b7105f7d797baa85e49f7936d3e90a3c698e1e7ed06",
+  "created": "2026-11-20T18:12:01Z",
+  "grade": "bundle",
+  "inputs": {
+   "http://example.org/inPathway": {
+    "kind": "asserted"
+   }
+  },
+  "kind": "fetch",
+  "pattern": {
+   "o": "?pathway",
+   "p": "<http://example.org/inPathway>",
+   "s": "?gene"
+  },
+  "requests": [
+   {
+    "bindings": null,
+    "bytes_decoded": 3270,
+    "bytes_wire": 711,
+    "complete": true,
+    "continued": false,
+    "elapsed_ms": 0.698,
+    "method": "GET",
+    "request_id": "565a91eeb6f40171-00000004",
+    "rows": null,
+    "status": 200,
+    "stopped": null,
+    "truncation_reason": null,
+    "url": "http://127.0.0.1:56839/genekg/v/2026-09-01/schema?children=properties&view=queryable&limit=1000"
+   },
+   {
+    "bindings": null,
+    "bytes_decoded": 1668,
+    "bytes_wire": 323,
+    "complete": true,
+    "continued": false,
+    "elapsed_ms": 0.525,
+    "method": "GET",
+    "request_id": "565a91eeb6f40171-00000005",
+    "rows": 7,
+    "status": 200,
+    "stopped": null,
+    "truncation_reason": null,
+    "url": "http://127.0.0.1:56839/genekg/v/2026-09-01/fragment?p=%3Chttp%3A%2F%2Fexample.org%2FinPathway%3E&limit=10000"
+   }
+  ],
+  "rows": 7,
+  "shape": "bindings",
+  "sources": [
+   {
+    "content_digest": "sha256:9b198164a3c9a247280afc19297cb5474ebefe5103c6ef896a19c2c4758b1deb",
+    "dataset": "genekg",
+    "dataset_iri": "https://example.org/kg/genekg",
+    "grade": "bundle",
+    "kind": "kgf",
+    "origin": "http://127.0.0.1:56839",
+    "version": "2026-09-01"
+   }
+  ],
+  "step": 5,
+  "table": "pathways",
+  "totals": {
+   "bindings_requests": 0,
+   "bytes_decoded": 4938,
+   "bytes_wire": 1034,
+   "elapsed_ms": 1.223,
+   "requests": 2
+  }
+ },
+ "detail": {
+  "intent": {
+   "kind": "fetch",
+   "pattern": {
+    "o": "?pathway",
+    "p": "<http://example.org/inPathway>",
+    "s": "?gene"
+   }
+  },
+  "plan": {
+   "approximations": [],
+   "caps": {
+    "max_bindings": 1000,
+    "max_limit": 10000
+   },
+   "completeness_expectation": "complete",
+   "estimated_requests": 1,
+   "estimated_rows": 7,
+   "evidence": {
+    "count": {
+     "exact": true,
+     "source": "inventory:predicate",
+     "value": 7
+    }
+   },
+   "intent": {
+    "kind": "fetch",
+    "pattern": {
+     "o": "?pathway",
+     "p": "<http://example.org/inPathway>",
+     "s": "?gene"
+    }
+   },
+   "schema": "kgfq.plan/1",
+   "steps": [
+    {
+     "estimated_requests": 1,
+     "estimated_rows": 7,
+     "note": "R1: paged at max_limit",
+     "op": "fragment",
+     "pattern": {
+      "o": "?pathway",
+      "p": "<http://example.org/inPathway>",
+      "s": "?gene"
+     }
+    }
+   ]
+  }
+ },
+ "schema": "kgf.receipt/1.0"
+}

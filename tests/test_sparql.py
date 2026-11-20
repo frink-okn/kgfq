@@ -61,42 +61,61 @@ def test_select_files_a_table_a_receipt_and_the_engine_receipt(ws, tmp_path):
     assert set(table.column("l_lang").to_pylist()) == {"en"}
     assert table.column("c_datatype").to_pylist() == [None] * 12
     receipt, _ = run("receipt", "labels", workspace=ws)
-    assert receipt["schema"] == "kgfq.receipt/4" and receipt["kind"] == "sparql"
-    [source] = receipt["sources"]
+    assert receipt["schema"] == "kgf.receipt/1.0" and receipt["core"]["kind"] == "sparql"
+    [source] = receipt["core"]["sources"]
     assert source["dataset"] == "chemkg" and source["version"] == "2026-09-01"
     assert (
         source["kind"] == "kgf" and source["url"].endswith("/fragment") and source["content_digest"]
     )
-    assert receipt["outcome"]["contract"] == "complete" and receipt["outcome"]["rows"] == 12
-    assert receipt["totals"]["requests"] >= 2 and receipt["completeness"]["complete"] is True
-    assert receipt["completeness"]["incomplete_because"] == []
+    assert (
+        receipt["detail"]["outcome"]["contract"] == "complete"
+        and receipt["detail"]["outcome"]["rows"] == 12
+    )
+    assert (
+        receipt["core"]["totals"]["requests"] >= 2
+        and receipt["core"]["completeness"]["complete"] is True
+    )
+    assert receipt["core"]["completeness"]["incomplete_because"] == []
     # the engine's request list is not copied: it is filed whole beside the table and pointed at
     assert "requests" not in receipt
-    assert receipt["requests_by_shape"] and receipt["requests_by_shape"][0]["requests"] >= 1
-    engine = ws / receipt["engine_receipt"]["path"]
-    assert engine == ws / "tables" / "labels.kgf-sparql.receipt.json" and engine.exists()
-    assert hashlib.sha256(engine.read_bytes()).hexdigest() == receipt["engine_receipt"]["sha256"]
-    doc = json.loads(engine.read_text())
-    assert doc["schema"] == "kgf-sparql.receipt/1" == receipt["engine_receipt"]["schema"]
-    assert all(r["request_id"] for r in doc["requests"] if r["status"] == 200)
-    assert receipt["engine"]["kgf_sparql"] and receipt["engine"]["exit_code"] == 0
-    assert receipt["query"] == LABELS and receipt["original_query"] is None
-    assert receipt["budget"]["max_requests"] == 20000 and receipt["budget"]["timeout_s"] == 60.0
-    assert receipt["lint"] == {"threshold": 6, "diagnostics": []}
     assert (
-        json.loads(pq.read_schema(ws / "tables" / "labels.parquet").metadata[b"kgfq.receipt"])[
-            "kind"
-        ]
-        == "sparql"
+        receipt["detail"]["requests_by_shape"]
+        and receipt["detail"]["requests_by_shape"][0]["requests"] >= 1
+    )
+    engine = ws / receipt["detail"]["engine_receipt"]["path"]
+    assert engine == ws / "tables" / "labels.kgf-sparql.receipt.json" and engine.exists()
+    assert (
+        hashlib.sha256(engine.read_bytes()).hexdigest()
+        == receipt["detail"]["engine_receipt"]["sha256"]
+    )
+    doc = json.loads(engine.read_text())
+    assert doc["schema"] == "kgf-sparql.receipt/1" == receipt["detail"]["engine_receipt"]["schema"]
+    assert all(r["request_id"] for r in doc["requests"] if r["status"] == 200)
+    assert (
+        receipt["detail"]["engine"]["kgf_sparql"] and receipt["detail"]["engine"]["exit_code"] == 0
+    )
+    assert receipt["detail"]["query"] == LABELS and receipt["detail"]["original_query"] is None
+    assert (
+        receipt["detail"]["budget"]["max_requests"] == 20000
+        and receipt["detail"]["budget"]["timeout_s"] == 60.0
+    )
+    assert receipt["detail"]["lint"] == {"threshold": 6, "diagnostics": []}
+    assert (
+        json.loads(pq.read_schema(ws / "tables" / "labels.parquet").metadata[b"kgf.receipt"])
+        == receipt
     )
     log, _ = run("log", workspace=ws)
     [record] = log["steps"]
-    assert record["command"] == "sparql" and record["status"] == "ok"
+    assert record["operation"] == "sparql" and record["status"] == "ok"
+    assert record["args"]["graphs"] == ["chemkg"] and record["args"]["file"] == str(q)
     assert record["pins"][0]["dataset"] == "chemkg"
-    assert record["receipt"]["outcome"]["contract"] == "complete"
-    assert "requests_by_shape" not in record["receipt"] and record["receipt"]["lint"] == []
+    # the record carries the receipt the footer does; the engine's request
+    # list stays in the engine's own receipt, pointed at
+    assert record["receipt"] == receipt and "requests" not in record["receipt"]["core"]
+    assert record["result"] == {"contract": "complete"}
     assert record["inputs"][str(q)]["kind"] == "external"
-    assert record["output"]["content_hash"] == handle["content_hash"]
+    [wrote] = record["outputs"]
+    assert wrote["content_hash"] == handle["content_hash"] and wrote["shape"] == "bindings"
 
 
 def test_sources_from_the_header_join_across_two_origins(ws, tmp_path):
@@ -110,9 +129,9 @@ def test_sources_from_the_header_join_across_two_origins(ws, tmp_path):
     handle, _ = run("sparql", str(q), workspace=ws)
     assert handle["contract"] == "complete" and handle["rows"] == 24
     receipt, _ = run("receipt", "affects", workspace=ws)
-    assert [s["dataset"] for s in receipt["sources"]] == ["chemkg", "genekg"]
-    assert len({s["origin"] for s in receipt["sources"]}) == 2
-    assert receipt["totals"]["bindings_requests"] >= 1
+    assert [s["dataset"] for s in receipt["core"]["sources"]] == ["chemkg", "genekg"]
+    assert len({s["origin"] for s in receipt["core"]["sources"]}) == 2
+    assert receipt["core"]["totals"]["bindings_requests"] >= 1
     pins, _ = run("pins", workspace=ws)
     assert set(pins) == {"chemkg", "genekg"}
 
@@ -143,19 +162,20 @@ def test_abort_at_a_budget_is_a_receipt_without_a_table(ws, tmp_path):
     assert not (ws / "tables" / "capped.parquet").exists()
     receipt, _ = run("receipt", "capped", workspace=ws)
     assert (
-        receipt["outcome"]["contract"] == "aborted"
-        and receipt["outcome"]["budget"] == "max_requests"
+        receipt["detail"]["outcome"]["contract"] == "aborted"
+        and receipt["detail"]["outcome"]["budget"] == "max_requests"
     )
-    assert receipt["completeness"]["complete"] is False and receipt["engine_receipt"]["path"]
-    assert receipt["completeness"]["incomplete_because"] == ["max_requests"]
-    assert receipt["engine"]["exit_code"] == 3
+    assert (
+        receipt["core"]["completeness"]["complete"] is False
+        and receipt["detail"]["engine_receipt"]["path"]
+    )
+    assert receipt["core"]["completeness"]["incomplete_because"] == ["max_requests"]
+    assert receipt["detail"]["engine"]["exit_code"] == 3
     log, _ = run("log", workspace=ws)
     [record] = log["steps"]
-    assert record["status"] == "ok" and record["output"] == {
-        "contract": "aborted",
-        "rows": 0,
-        "budget": "max_requests",
-    }
+    assert record["status"] == "ok" and record["outputs"] == []
+    assert record["result"] == {"contract": "aborted", "rows": 0, "budget": "max_requests"}
+    assert record["receipt"] == receipt, "a step with no table keeps its receipt in its record"
     # a rerun that completes replaces the receipt and writes the table
     handle, _ = run("sparql", str(q), "--dataset", "chemkg", "--out", "capped", workspace=ws)
     assert handle["rows"] == 12 and (ws / "tables" / "capped.parquet").exists()
@@ -174,7 +194,7 @@ def test_abort_at_a_budget_is_a_receipt_without_a_table(ws, tmp_path):
     )
     assert not (ws / "tables" / "capped.parquet").exists()
     log, _ = run("log", workspace=ws)
-    assert log["steps"][-1]["output"]["replaced_table"] == "capped"
+    assert log["steps"][-1]["result"]["replaced_table"] == "capped"
 
 
 def test_row_budget_writes_the_rows_with_an_approximation(ws, tmp_path):
@@ -197,8 +217,10 @@ def test_row_budget_writes_the_rows_with_an_approximation(ws, tmp_path):
     assert "max-rows 3" in handle["approximations"][0]
     assert pq.read_table(ws / "tables" / "few.parquet").num_rows == 3
     receipt, _ = run("receipt", "few", workspace=ws)
-    assert receipt["completeness"]["complete"] is False and receipt["approximations"]
-    assert receipt["completeness"]["incomplete_because"] == ["max_rows"]
+    assert (
+        receipt["core"]["completeness"]["complete"] is False and receipt["core"]["approximations"]
+    )
+    assert receipt["core"]["completeness"]["incomplete_because"] == ["max_rows"]
 
 
 def test_refusal_above_the_threshold_or_at_a_strong_diagnostic_unless_forced(ws, tmp_path):
@@ -266,11 +288,12 @@ def test_engine_error_is_verbatim_and_a_named_endpoint_is_graded_sparql(ws, tmp_
     assert handle["contract"] == "error" and handle["grade"] == "sparql" and handle["error"]
     assert err.strip() == handle["error"].strip()
     receipt, _ = run("receipt", "nowhere", workspace=ws)
-    assert receipt["sources"] == [
+    assert receipt["core"]["sources"] == [
         {"kind": "sparql", "grade": "sparql", "url": "http://127.0.0.1:9/sparql"}
     ]
     assert (
-        receipt["outcome"]["contract"] == "error" and receipt["outcome"]["error"] == handle["error"]
+        receipt["detail"]["outcome"]["contract"] == "error"
+        and receipt["detail"]["outcome"]["error"] == handle["error"]
     )
     log, _ = run("log", workspace=ws)
     assert log["steps"][-1]["status"] == "error" and log["steps"][-1]["error"] == handle["error"]
@@ -287,7 +310,7 @@ def test_ask_and_construct(ws, tmp_path):
     ).exists()
     log, _ = run("log", workspace=ws)
     # the engine counts the answer as one row; the receipt keeps its numbers verbatim
-    assert log["steps"][-1]["output"] == {"contract": "complete", "rows": 1, "boolean": True}
+    assert log["steps"][-1]["result"] == {"contract": "complete", "rows": 1, "boolean": True}
     construct = write(
         tmp_path, "cons.rq", P + "CONSTRUCT { ?c ex:hasLabel ?l } WHERE { ?c rdfs:label ?l }"
     )
@@ -321,12 +344,13 @@ def test_normalize_records_equivalent_rewrites_and_the_answer_is_unchanged(ws, t
         ("KGFQ001", True),
     ]
     receipt, _ = run("receipt", "normed", workspace=ws)
-    assert receipt["original_query"] == NORM and "BIND" not in receipt["query"]
-    assert f"VALUES ?x {{ {CHEM.format(1)} }}" in receipt["query"]
-    assert f"VALUES ?c {{ {CHEM.format(4)} {CHEM.format(6)} }}" in receipt["query"]
-    assert "FILTER" in receipt["query"], "the filter stays as the residual check"
+    assert receipt["detail"]["original_query"] == NORM and "BIND" not in receipt["detail"]["query"]
+    assert f"VALUES ?x {{ {CHEM.format(1)} }}" in receipt["detail"]["query"]
+    assert f"VALUES ?c {{ {CHEM.format(4)} {CHEM.format(6)} }}" in receipt["detail"]["query"]
+    assert "FILTER" in receipt["detail"]["query"], "the filter stays as the residual check"
     log, _ = run("log", workspace=ws)
-    assert log["steps"][-1]["receipt"]["normalizations"] == ["KGFQ002", "KGFQ001"]
+    applied = log["steps"][-1]["receipt"]["detail"]["normalizations"]
+    assert [n["rule"] for n in applied if n["applied"]] == ["KGFQ002", "KGFQ001"]
 
 
 def test_normalize_declines_what_it_cannot_prove():

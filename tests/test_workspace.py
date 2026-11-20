@@ -5,7 +5,9 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from kgfq import __version__
 from kgfq.workspace.log import Step, classify_file, weakest_grade
+from kgfq.workspace.receipts import new_receipt
 from kgfq.workspace.store import Pin, TableHash, Workspace, WorkspaceError
 
 
@@ -23,17 +25,52 @@ def triples(rows):
     )
 
 
+def receipt(step=1, grade="bundle"):
+    return new_receipt(
+        kind="fetch",
+        step=step,
+        grade=grade,
+        sources=[],
+        shape="triples",
+        completeness={"complete": True, "incomplete_because": []},
+        totals={"requests": 0},
+    )
+
+
 def test_table_write_carries_receipt_in_footer_and_sidecar(tmp_path):
     ws = Workspace(tmp_path)
     t = triples([("a", "p", "x"), ("b", "p", "y")])
-    info = ws.write_table("t1", t, {"kind": "fetch", "grade": "bundle", "step": 1})
+    given = receipt()
+    info = ws.write_table("t1", t, given)
     assert info.rows == 2 and info.columns[:3] == ["s", "p", "o"]
     sidecar = json.loads(ws.receipt_path("t1").read_text())
-    footer = json.loads(pq.read_schema(ws.table_path("t1")).metadata[b"kgfq.receipt"])
+    footer = json.loads(pq.read_schema(ws.table_path("t1")).metadata[b"kgf.receipt"])
     assert sidecar == footer == info.receipt
-    assert sidecar["content_hash"].startswith("sha256:") and sidecar["table"] == "t1"
+    core = footer["core"]
+    assert core["content_hash"] == info.content_hash == Workspace.content_hash(t)
+    assert (core["table"], core["rows"], core["columns"]) == ("t1", 2, t.column_names)
+    assert "table" not in given["core"], "the receipt passed in is not written to"
     assert ws.list_tables() == ["t1"]
-    assert ws.read_receipt("t1")["grade"] == "bundle"
+    assert ws.read_receipt("t1")["core"]["grade"] == "bundle"
+
+
+def test_a_tables_receipt_is_its_footer_and_a_sidecar_stands_alone_only_without_one(tmp_path):
+    """The footer cannot be parted from the rows, so it is the receipt of record.
+    A session another client wrote need not have sidecars; a step that wrote no
+    table has only one."""
+    ws = Workspace(tmp_path)
+    ws.write_table("t1", triples([("a", "p", "x")]), receipt())
+    ws.receipt_path("t1").write_text(json.dumps({"core": {"grade": "asserted"}}))
+    assert ws.read_receipt("t1")["core"]["grade"] == "bundle"
+    ws.receipt_path("t1").unlink()
+    assert ws.read_receipt("t1")["core"]["table"] == "t1"
+    ws.write_receipt("aborted", receipt(step=2))
+    assert ws.read_receipt("aborted")["core"]["step"] == 2 and not ws.has_table("aborted")
+    with pytest.raises(WorkspaceError, match="no table or receipt named 'nothing'"):
+        ws.read_receipt("nothing")
+    pq.write_table(triples([("a", "p", "x")]), ws.table_path("bare"))
+    with pytest.raises(WorkspaceError, match="carries no receipt in its footer"):
+        ws.read_receipt("bare")
 
 
 def test_content_hash_ignores_row_order(tmp_path):
@@ -123,19 +160,27 @@ def test_endpoints_and_pins(tmp_path):
 
 def test_log_steps_and_classification(tmp_path):
     ws = Workspace(tmp_path)
-    step = Step(ws, "cli", "fetch", {"ds": "chemkg"})
+    step = Step(ws, "cli", "fetch", {"graph": "chemkg"})
     assert step.step == 1
-    ws.write_table(
-        "genes",
-        triples([("http://g/1", "p", "http://x/1")]),
-        {"kind": "fetch", "grade": "bundle", "step": 1},
-    )
-    step.output(table="genes")
+    info = ws.write_table("genes", triples([("http://g/1", "p", "http://x/1")]), receipt())
+    step.table(info.receipt)
     rec = step.finish()
-    assert rec["step"] == 1 and rec["status"] == "ok" and rec["schema"] == "kgfq.log/1"
+    assert rec["step"] == 1 and rec["status"] == "ok" and rec["schema"] == "kgf.session/1.0"
+    assert rec["client"] == {"name": "kgfq", "version": __version__, "surface": "cli"}
+    assert rec["actor"] is None and rec["operation"] == "fetch"
+    assert rec["outputs"] == [
+        {
+            "table": "genes",
+            "shape": "triples",
+            "rows": 1,
+            "grade": "bundle",
+            "content_hash": info.content_hash,
+        }
+    ]
     assert ws.read_log() == [rec]
 
-    step2 = Step(ws, "cli", "count", {})
+    step2 = Step(ws, "mcp", "count", {}, actor="assistant")
+    assert step2.record["actor"] == "assistant" and step2.record["client"]["surface"] == "mcp"
     assert step2.step == 2
     got = step2.input_values(["http://g/1", "http://x/1", "http://nowhere"])
     assert got["http://g/1"] == {"kind": "derived", "table": "genes", "step": 1, "grade": "bundle"}
@@ -147,6 +192,18 @@ def test_log_steps_and_classification(tmp_path):
     assert classify_file(ws, ws.table_path("genes"))["kind"] == "derived"
     step2.finish()
     assert [r["step"] for r in ws.read_log()] == [1, 2]
+
+
+def test_a_value_is_derived_from_the_step_that_first_held_it(tmp_path):
+    """Tables are listed by name, and `affects`, written at step 4, came before
+    `chems`, written at step 3, so a chemical both hold was said to come from
+    the later step."""
+    ws = Workspace(tmp_path)
+    ws.write_table("chems", triples([("http://c/1", "p", "x")]), receipt(step=3))
+    ws.write_table("affects", triples([("http://c/1", "p", "http://g/2")]), receipt(step=4))
+    got = Step(ws, "cli", "fetch", {}).input_values(["http://c/1", "http://g/2"])
+    assert (got["http://c/1"]["table"], got["http://c/1"]["step"]) == ("chems", 3)
+    assert (got["http://g/2"]["table"], got["http://g/2"]["step"]) == ("affects", 4)
 
 
 def test_weakest_grade():

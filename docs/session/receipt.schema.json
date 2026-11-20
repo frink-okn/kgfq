@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgf.okn.us/schemas/kgf.receipt/1",
+  "title": "KGF session receipt (kgfq C6, D5, D17; kgf-explorer D5)",
+  "description": "What makes an approximate answer a finding. A table carries its receipt in its Parquet footer under `kgf.receipt`, which is the receipt of record; a step that wrote no table carries it in its log record. Shared by the clients that write sessions (notes/session-format.md §5): `core` is read the same way by every client, and `detail` belongs to the operation named by `core.kind`. A reader that does not implement that operation keeps `detail` as it came. Unknown fields anywhere are ignored, never refused, so nothing here is closed but the major version: a reader accepts its own major and any minor.",
+  "type": "object",
+  "required": ["schema", "core"],
+  "properties": {
+    "schema": {"type": "string", "pattern": "^kgf\\.receipt/1\\.[0-9]+$"},
+    "core": {
+      "type": "object",
+      "required": ["kind", "grade", "sources", "completeness", "totals", "created"],
+      "properties": {
+        "kind": {"type": "string", "description": "The operation that wrote the receipt, by its registry name (docs/session/operations.yaml)."},
+        "step": {"type": ["integer", "null"], "description": "The log step that produced it."},
+        "created": {"type": "string", "format": "date-time"},
+        "grade": {
+          "type": "string",
+          "description": "How far the table can be checked later (kgfq D17). `bundle`: read from a KGF release, re-fetched identically by digest. `sparql`: a live endpoint, re-run and compared. `external`: brought in from elsewhere, checked only against the archived copy. `asserted`: typed by a person or a model. A derived table takes the lowest grade among its inputs. Today's values, weakest last: bundle, sparql, external, asserted."
+        },
+        "sources": {
+          "type": "array",
+          "description": "Every graph or endpoint the step read, each graded. A `kgf` source is a graph at a pinned release; its digest is its identity and its origin is where it was fetched.",
+          "items": {
+            "type": "object",
+            "required": ["kind", "grade"],
+            "properties": {
+              "kind": {"type": "string", "description": "`kgf` or `sparql` today."},
+              "grade": {"type": "string"},
+              "origin": {"type": "string"},
+              "dataset": {"type": "string"},
+              "dataset_iri": {"type": ["string", "null"]},
+              "version": {"type": "string"},
+              "content_digest": {"type": "string"},
+              "url": {"type": "string"}
+            }
+          }
+        },
+        "table": {"type": "string", "description": "The table's name, unique in its session."},
+        "shape": {
+          "type": ["string", "null"],
+          "description": "The table's layout; null for a receipt with no table. `bindings`: four columns per variable, the value then its `_kind` (`iri`, `literal`, `bnode`), `_lang` and `_datatype`. `triples`: `s`, `p`, `o` and the object's three companions. No reader infers a layout from the columns."
+        },
+        "pattern": {
+          "type": ["object", "null"],
+          "description": "For a `bindings` table that answers one pattern: each of `s`, `p`, `o` as a term in doc 03 §3.3 syntax or the `?variable` whose columns hold it. Substituting a row's values gives the triple the row stands for.",
+          "properties": {"s": {"type": "string"}, "p": {"type": "string"}, "o": {"type": "string"}}
+        },
+        "columns": {"type": "array", "items": {"type": "string"}},
+        "rows": {"type": "integer"},
+        "content_hash": {
+          "type": "string",
+          "description": "`sha256:` and the hex digest of the table's rows in the `kgf.table-hash/1` encoding (notes/session-format.md §5): independent of row order, and the same from any client."
+        },
+        "completeness": {
+          "type": "object",
+          "required": ["complete", "incomplete_because"],
+          "description": "A table is incomplete only when its read left rows the source still had. `incomplete_because` names why: `max_rows`, a budget, a truncation whose cursor was not followed, `error`.",
+          "properties": {
+            "complete": {"type": "boolean"},
+            "incomplete_because": {"type": "array", "items": {"type": "string"}},
+            "truncation_reasons": {"type": "array", "items": {"type": "string"}, "description": "Every reason a response gave, continued or not: the trace."}
+          }
+        },
+        "totals": {
+          "type": "object",
+          "required": ["requests"],
+          "properties": {
+            "requests": {"type": "integer"},
+            "bindings_requests": {"type": "integer"},
+            "bytes_decoded": {"type": ["integer", "null"]},
+            "bytes_wire": {"type": ["integer", "null"], "description": "Null where the client cannot see the wire."},
+            "elapsed_ms": {"type": "number"}
+          }
+        },
+        "requests": {
+          "type": "array",
+          "description": "One entry per response. Absent where the list is kept elsewhere and `detail` points at it, as a SPARQL run's is in the engine's own receipt.",
+          "items": {
+            "type": "object",
+            "required": ["method", "url"],
+            "properties": {
+              "request_id": {"type": ["string", "null"], "description": "The server's `KGF-Request-Id`."},
+              "method": {"type": "string"},
+              "url": {"type": "string"},
+              "status": {"type": ["integer", "null"]},
+              "bytes_wire": {"type": ["integer", "null"]},
+              "bytes_decoded": {"type": ["integer", "null"]},
+              "elapsed_ms": {"type": "number"},
+              "complete": {"type": ["boolean", "null"], "description": "The server's flag, verbatim."},
+              "truncation_reason": {"type": ["string", "null"]},
+              "continued": {"type": "boolean", "description": "The client followed this response's cursor."},
+              "stopped": {"type": ["string", "null"], "description": "The read ended here with rows left, and why."},
+              "bindings": {"type": ["integer", "null"], "description": "Input rows this request carried."},
+              "rows": {"type": ["integer", "null"], "description": "Rows of the table this response carried; null for a request that carried none."}
+            }
+          }
+        },
+        "bindings": {
+          "type": "object",
+          "description": "For a bound step: how many input tuples were sent and how many found nothing, with a sample of those (kgfq C6's unmatched report, kgf-explorer D8).",
+          "properties": {
+            "table": {"type": "string"},
+            "columns": {"type": "object"},
+            "sent": {"type": "integer"},
+            "matched": {"type": "integer"},
+            "unmatched": {"type": "integer"},
+            "unmatched_sample": {"type": "array"}
+          }
+        },
+        "approximations": {"type": "array", "items": {"type": "string"}},
+        "inputs": {
+          "type": "object",
+          "description": "Each value, file or table the step consumed, classified against earlier steps' outputs; for a derived table, the receipts' cores of the tables it read, one hop."
+        }
+      }
+    },
+    "detail": {
+      "type": "object",
+      "description": "The operation's own record. kgfq's `fetch`: `intent` and `plan` (kgfq.plan/1). kgfq's `sparql`: `query`, `original_query`, `normalizations`, `lint`, `engine`, `budget`, `outcome`, `statistics`, `requests_by_shape`, and `engine_receipt`, a pointer by path and sha256 to the receipt kgf-sparql wrote."
+    }
+  }
+}

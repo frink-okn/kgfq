@@ -1,0 +1,123 @@
+{
+ "core": {
+  "approximations": [],
+  "columns": [
+   "chem",
+   "chem_kind",
+   "chem_lang",
+   "chem_datatype",
+   "name",
+   "name_kind",
+   "name_lang",
+   "name_datatype"
+  ],
+  "completeness": {
+   "complete": true,
+   "incomplete_because": [],
+   "truncation_reasons": []
+  },
+  "content_hash": "sha256:baee9f4eb015dd2f3c32d769a6a8419047e61ed4eb33f334cddd3dbb58499e3d",
+  "created": "2026-11-20T18:12:01Z",
+  "grade": "bundle",
+  "inputs": {
+   "http://www.w3.org/2000/01/rdf-schema#label": {
+    "kind": "asserted"
+   }
+  },
+  "kind": "fetch",
+  "pattern": {
+   "o": "?name",
+   "p": "<http://www.w3.org/2000/01/rdf-schema#label>",
+   "s": "?chem"
+  },
+  "requests": [
+   {
+    "bindings": null,
+    "bytes_decoded": 2722,
+    "bytes_wire": 451,
+    "complete": true,
+    "continued": false,
+    "elapsed_ms": 0.737,
+    "method": "GET",
+    "request_id": "b22548a990ec39f5-0000000a",
+    "rows": 12,
+    "status": 200,
+    "stopped": null,
+    "truncation_reason": null,
+    "url": "http://127.0.0.1:56838/chemkg/v/2026-09-01/fragment?p=%3Chttp%3A%2F%2Fwww.w3.org%2F2000%2F01%2Frdf-schema%23label%3E&limit=10000"
+   }
+  ],
+  "rows": 12,
+  "shape": "bindings",
+  "sources": [
+   {
+    "content_digest": "sha256:2e1e9f086d737eaa2571ceec36bbb1bfaf329a4f8154ae0a0ad074647d20392c",
+    "dataset": "chemkg",
+    "dataset_iri": "https://example.org/kg/chemkg",
+    "grade": "bundle",
+    "kind": "kgf",
+    "origin": "http://127.0.0.1:56838",
+    "version": "2026-09-01"
+   }
+  ],
+  "step": 3,
+  "table": "chems",
+  "totals": {
+   "bindings_requests": 0,
+   "bytes_decoded": 2722,
+   "bytes_wire": 451,
+   "elapsed_ms": 0.737,
+   "requests": 1
+  }
+ },
+ "detail": {
+  "intent": {
+   "kind": "fetch",
+   "pattern": {
+    "o": "?name",
+    "p": "<http://www.w3.org/2000/01/rdf-schema#label>",
+    "s": "?chem"
+   }
+  },
+  "plan": {
+   "approximations": [],
+   "caps": {
+    "max_bindings": 1000,
+    "max_limit": 10000
+   },
+   "completeness_expectation": "complete",
+   "estimated_requests": 1,
+   "estimated_rows": 12,
+   "evidence": {
+    "count": {
+     "exact": true,
+     "source": "inventory:predicate",
+     "value": 12
+    }
+   },
+   "intent": {
+    "kind": "fetch",
+    "pattern": {
+     "o": "?name",
+     "p": "<http://www.w3.org/2000/01/rdf-schema#label>",
+     "s": "?chem"
+    }
+   },
+   "schema": "kgfq.plan/1",
+   "steps": [
+    {
+     "estimated_requests": 1,
+     "estimated_rows": 12,
+     "note": "R1: paged at max_limit",
+     "op": "fragment",
+     "pattern": {
+      "o": "?name",
+      "p": "<http://www.w3.org/2000/01/rdf-schema#label>",
+      "s": "?chem"
+     }
+    }
+   ]
+  }
+ },
+ "schema": "kgf.receipt/1.0"
+}
