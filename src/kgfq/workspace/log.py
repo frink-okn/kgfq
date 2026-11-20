@@ -141,6 +141,19 @@ class Step:
         self.record["inputs"][str(path)] = info
         return info
 
+    def input_table(self, name: str) -> dict[str, Any]:
+        """A workspace table the step read, as ``bind`` does: derived from the
+        step that wrote it, at that table's grade."""
+        core = self.ws.read_receipt(name)["core"]
+        info = {
+            "kind": "derived",
+            "table": name,
+            "step": core.get("step"),
+            "grade": core.get("grade"),
+        }
+        self.record["inputs"][name] = info
+        return info
+
     def pin(self, pin: Mapping[str, Any]) -> None:
         self.record["pins"].append(dict(pin))
 

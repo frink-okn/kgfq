@@ -205,6 +205,10 @@ class Workspace:
     def read_table(self, name: str, columns: list[str] | None = None) -> pa.Table:
         return pq.read_table(self.table_path(name), columns=columns)
 
+    def table_columns(self, name: str) -> list[str]:
+        """A table's column names, from its footer: no row is read."""
+        return list(pq.read_schema(self.table_path(name)).names)
+
     def read_receipt(self, name: str) -> dict[str, Any]:
         """A table's receipt from its footer, which cannot be parted from the
         rows; the sidecar only where there is no table (2026-11-20). A sidecar

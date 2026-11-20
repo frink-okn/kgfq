@@ -148,6 +148,7 @@ operations:
         predicate: *position
         object: *position
         by: {type: string, enum: [s, p, o], description: "The grouped position."}
+        bind: *bind
         values: {type: string, description: "A bindings file, classified in the record's inputs."}
         limit: {type: integer, minimum: 1, description: "Groups a page."}
         top: {type: integer, minimum: 1, description: "Only the largest values are shown; the answer is still whole."}

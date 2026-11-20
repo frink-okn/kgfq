@@ -1184,7 +1184,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq sample <ds> <pattern> [-n]` | verify | `/sample` |
 | `kgfq distinct <ds> <pattern> --by s\|p\|o [--values file] [--top N]` | verify | `/distinct` (doc 03 §3.4.13) |
 | `kgfq resolve <text> [--datasets …] [--role label]` | situate | fan-out `/search` (C7) |
-| `kgfq fetch <ds> <pattern> [--values file] --out t.parquet\|.csv\|.json` | act | the strategy function over `/fragment` |
+| `kgfq fetch <ds> <pattern> [--values file \| --bind table:var=column] --out t.parquet\|.csv\|.json` | act | the strategy function over `/fragment` |
 | `kgfq hydrate <ds> --subjects file --properties p1,p2 --out …` | act | bindings per property today, `/star` when routed |
 | `kgfq labels <ds> --iris file` | act | `/labels` |
 | `kgfq import <file\|url> --from "<description>"` | act | a table graded `external` — the one door for other data (D17, C9) |
@@ -1255,6 +1255,23 @@ shape for values, which is not decided.
 gives them, which are `../kgf-explorer`'s: the word typed, the word in the log and, when
 `kgfq-mcp` lands, the tool's name are one. The first names and the hyphenated spellings
 still run (`ALIASES`). The other commands already had their operations' names.
+
+*Landed 2026-11-20 — `--bind`* (`kgfq.workspace.bind`, `tests/test_bind.py`), the first of
+the operations `../kgf-explorer` has and kgfq lacked (`notes/session-format.md` §8).
+`--bind table:variable=column[,…]` gives pattern variables the distinct values, or tuples,
+of an earlier table's columns; `table:name` binds `?name` to the column of that name.
+`fetch`, `count`, `distinct` and `explain` take it in place of `--values`, and refuse both.
+- The terms are read back from the table's own columns, kind, language and datatype
+  beside the value, so what is sent is the term that was fetched and no value passes
+  through a file or a model. A column with no `_kind` beside it is refused, but for a
+  triples table's `s` and `p`, which need none.
+- The record's `args` carry `bind: {table, columns}`, the registry's and the explorer's
+  form, and `inputs` name the table as derived from the step that wrote it, at its grade.
+  The fetched table stays `bundle`: its rows are triples of a release, whatever chose them.
+- A missing table lists the tables there are; a missing column, the columns. Bindings the
+  pattern does not name are still C1's refusal.
+- *Verified by:* genes fetched from one fixture server bind a fetch of their pathways from
+  the other; the table's content hash equals the same fetch through a values file.
 
 Conventions: JSON on stdout when not a TTY, tables when it is; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the

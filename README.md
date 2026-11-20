@@ -52,6 +52,13 @@ A fetched table's columns are the pattern's variables, four for each: `?zip` is 
 no column, and an anonymous position's is `s`, `p` or `o`. The receipt keeps the
 pattern, so `kgfq export` can put every row back into it and write the triples.
 
+`--bind` carries one step's result into the next without a file between them:
+`--bind affected:gene` gives the pattern's `?gene` the distinct values of the table
+`affected`'s column `gene`, and `--bind chems:c=chem` binds `?c` to the column `chem`. The
+terms are read back from the table, kind, language and datatype included, so a join across
+two graphs is a fetch from one and a bound fetch from the other. `fetch`, `count`,
+`distinct` and `explain` take it, in place of `--values`.
+
 `kgfq distinct` lists the distinct values one position of a pattern takes, each with
 its triples, through doc 03 §3.4.13's `/distinct`. The server walks its indexes, so the
 cost follows the number of values, not the triples behind them. `--by` names the

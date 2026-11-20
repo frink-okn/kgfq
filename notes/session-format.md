@@ -291,9 +291,9 @@ Decided while writing it:
   in doc 03 §3.3 syntax with IRIs bracketed, `?name`, or left out for an unnamed position.
   A client logs that spelling whatever its surface took; the explorer, which accepts a bare
   `http…` IRI in a pattern, brackets it on the way to the log.
-- **`bind: {table, columns}`** is the explorer's form and the registry's. kgfq has only
-  `--values <file>` until it has `bind` (§10 step 4); the registry lists `values` as kgfq's,
-  and the record's `inputs` classify the file. `import` (C9) will make the file a table.
+- **`bind: {table, columns}`** is the explorer's form and the registry's, and kgfq's
+  `--bind` since 2026-11-20. The registry still lists `values`, a file, as kgfq's; the
+  record's `inputs` classify it. `import` (C9) will make the file a table.
 - **Nothing is closed.** A client may log an argument the registry does not list, and a
   reader keeps it.
 - **No `replayable_by` yet.** Replay is per operation and per client (§2), and no client
@@ -358,10 +358,10 @@ and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the 
 | `graph_summary` | `graph_summary` | `graph_summary` (was `summary`) | have |
 | `schema` | graph, class, class+predicate | plus datatype, projection, view | have; args to reconcile |
 | `search` | one graph's `/search` | — (C7 `resolve` planned) | **kgfq needs** |
-| `count` | many graphs, bind from a table | one graph, `--values` | **kgfq needs** many graphs and `bind` |
+| `count` | many graphs, bind from a table | one graph, `--values`, `--bind` (2026-11-20) | **kgfq needs** many graphs |
 | `sample` | — | `sample` | kgfq only for now |
 | `distinct` | — | `distinct` (kgf-rs unit 38, not on `apps.okn.us`) | kgfq only for now |
-| `fetch` | bind from a table | `--values`, `--max-rows`, R1/R2 plan | **kgfq needs** `bind`; bindings storage (§4.3) |
+| `fetch` | bind from a table | `--values`, `--bind` (2026-11-20), `--max-rows`, R1/R2 plan | have |
 | `describe`, `incoming`, `instances`, `neighbors`, `two_hop` | SPARQL templates in the tab | — | **kgfq needs**, as fetch plans, not SPARQL: each is one or two patterns |
 | `sql` | one SELECT, locked DuckDB-Wasm | — (C8 not built) | **kgfq needs** |
 | `labels` | `/labels`, beside tables | — (C7 not built) | **kgfq needs** |

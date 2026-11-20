@@ -259,3 +259,17 @@ def term_columns(
         case BNode(label):
             return (f"_:{label}", "bnode", None, None)
     raise TypeError(f"not a term: {term!r}")
+
+
+def term_from_columns(
+    value: str, kind: str | None, lang: str | None = None, datatype: str | None = None
+) -> Term:
+    """The term a table's column set stores: the inverse of :func:`term_columns`,
+    so a value read back from a table is the term that was written."""
+    if kind == "iri":
+        return Iri(value)
+    if kind == "bnode":
+        return BNode(value.removeprefix("_:"))
+    if kind == "literal":
+        return Literal(value, lang=lang or None, datatype=None if lang else datatype or None)
+    raise ValueError(f"a term's kind is one of {', '.join(TERM_KINDS)}, not {kind!r}")

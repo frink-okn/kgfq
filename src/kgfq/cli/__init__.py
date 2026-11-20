@@ -47,6 +47,7 @@ from ..sparql import (
     run_engine,
     sparql_receipt,
 )
+from ..workspace.bind import bind_rows, parse_bind
 from ..workspace.log import Step
 from ..workspace.receipts import fetch_receipt, request_receipt
 from ..workspace.store import Workspace, WorkspaceError, stamped, write_parquet
@@ -61,6 +62,11 @@ ALIASES = {
     "summary": "graph_summary",
     "graph-summary": "graph_summary",
 }
+
+BIND_HELP = (
+    "bind pattern variables to an earlier table's columns: `chems:c=chem` gives ?c the "
+    "distinct values of table chems's column chem"
+)
 
 DEFAULT_PREFIXES = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -119,12 +125,32 @@ class Cli:
         parsed = [None if t == "?" else parse_term(t, prefixes) for t in tokens]
         return Pattern(*parsed)
 
-    def values(
-        self, ep: Endpoint, rel: Release, path: str | None
-    ) -> tuple[list[str], list[list[Term]]] | tuple[None, None]:
-        if not path:
-            return None, None
-        return read_values(Path(path), self.prefixes(ep, rel))
+    def bindings(
+        self, ep: Endpoint, rel: Release
+    ) -> tuple[list[str] | None, list[list[Term]] | None, dict[str, Any] | None]:
+        """What gives the pattern its bindings, if anything does: ``--bind``, a
+        column of an earlier table, or ``--values``, a file. Returns the
+        variables, the rows, and the registry's ``bind`` when it was a table."""
+        values, bind = getattr(self.args, "values", None), getattr(self.args, "bind", None)
+        if values and bind:
+            raise KgfqError("--bind and --values both give the pattern its bindings; pass one")
+        if bind:
+            spec = parse_bind(bind)
+            vars_, rows = bind_rows(self.workspace, spec)
+            return vars_, rows, spec
+        if values:
+            vars_, rows = read_values(Path(values), self.prefixes(ep, rel))
+            return vars_, rows, None
+        return None, None, None
+
+    def bound_from(self, step: Step, spec: dict[str, Any] | None) -> dict[str, Any]:
+        """Classify what the bindings came from in the step's inputs: an
+        earlier table is derived, a file is external by its hash (C9)."""
+        if spec:
+            return {spec["table"]: step.input_table(spec["table"])}
+        if getattr(self.args, "values", None):
+            return {str(self.args.values): step.input_file(Path(self.args.values))}
+        return {}
 
     def stats(self, ep: Endpoint, rel: Release) -> Statistics:
         return Statistics(self.workspace, ep, rel)
@@ -275,12 +301,13 @@ class Cli:
         a = self.args
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
-        vars_, rows = self.values(ep, rel, a.values)
-        step = self.step("count", graphs=[a.dataset], **_positions(pattern), values=a.values)
+        vars_, rows, bind = self.bindings(ep, rel)
+        step = self.step(
+            "count", graphs=[a.dataset], **_positions(pattern), bind=bind, values=a.values
+        )
         step.pin(_pin(ep, rel))
         step.input_values(_bound_values(pattern))
-        if a.values:
-            step.input_file(Path(a.values))
+        self.bound_from(step, bind)
         with ep.trace() as t:
             stats = self.stats(ep, rel)
             if rows is None:
@@ -347,20 +374,20 @@ class Cli:
         a = self.args
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
-        vars_, rows = self.values(ep, rel, a.values)
+        vars_, rows, bind = self.bindings(ep, rel)
         step = self.step(
             "distinct",
             graph=a.dataset,
             **_positions(pattern),
             by=a.by,
+            bind=bind,
             values=a.values,
             limit=a.limit,
             top=a.top,
         )
         step.pin(_pin(ep, rel))
         step.input_values(_bound_values(pattern))
-        if a.values:
-            step.input_file(Path(a.values))
+        self.bound_from(step, bind)
         with ep.trace() as t:
             answer = ep.distinct(rel, pattern, a.by, vars_=vars_, rows=rows, limit=a.limit)
         prefixes = self.prefixes(ep, rel)
@@ -402,7 +429,7 @@ class Cli:
         a = self.args
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
-        vars_, rows = self.values(ep, rel, a.values)
+        vars_, rows, _ = self.bindings(ep, rel)
         plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows, stats=self.stats(ep, rel))
         self.emit(plan.as_dict())
         return 0
@@ -411,20 +438,20 @@ class Cli:
         a = self.args
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
-        vars_, rows = self.values(ep, rel, a.values)
+        vars_, rows, bind = self.bindings(ep, rel)
         out = a.out or _default_table_name(pattern)
         step = self.step(
             "fetch",
             graph=a.dataset,
             **_positions(pattern),
+            bind=bind,
             values=a.values,
             max_rows=a.max_rows,
             out=out,
         )
         step.pin(_pin(ep, rel))
         inputs = step.input_values(_bound_values(pattern))
-        if a.values:
-            inputs[str(a.values)] = step.input_file(Path(a.values))
+        inputs.update(self.bound_from(step, bind))
         with ep.trace() as t:
             plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows, stats=self.stats(ep, rel))
             table = execute_fetch(
@@ -1025,6 +1052,7 @@ def build_parser() -> argparse.ArgumentParser:
         c.add_argument("dataset")
         c.add_argument("pattern", help="three terms: `?s rdfs:label ?o`")
         c.add_argument("--values", help="bindings file (JSON or tab-separated with a ?var header)")
+        c.add_argument("--bind", help=BIND_HELP)
         if name == "fetch":
             c.add_argument("--out", help="table name, or a .parquet/.csv/.json path")
             c.add_argument("--max-rows", type=int)
@@ -1036,6 +1064,7 @@ def build_parser() -> argparse.ArgumentParser:
     fc.add_argument("pattern", help="three terms: `? fbi:OffenseUCRCode ?code`")
     fc.add_argument("--by", required=True, choices=["s", "p", "o"], help="the grouped position")
     fc.add_argument("--values", help="bindings file (JSON or tab-separated with a ?var header)")
+    fc.add_argument("--bind", help=BIND_HELP)
     fc.add_argument("--limit", type=int, help="groups per page (default: the server's max_limit)")
     fc.add_argument(
         "--top", type=int, help="print only the N largest values (all values are still read)"
