@@ -19,6 +19,9 @@ from kgfq.workspace.triples import triples
 
 SESSION = Path(__file__).parent.parent / "docs" / "session"
 RECEIPT = jsonschema.Draft202012Validator(json.loads((SESSION / "receipt.schema.json").read_text()))
+ENVELOPE = jsonschema.Draft202012Validator(
+    json.loads((SESSION / "envelope.schema.json").read_text())
+)
 OPERATIONS = yaml.safe_load((SESSION / "operations.yaml").read_text())["operations"]
 CLIENTS = {"kgfq", "kgf-explorer"}
 P = "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX ex: <http://example.org/>\n"
@@ -44,6 +47,173 @@ def receipts(ws: Path) -> dict[str, dict]:
         assert found.get(table.stem, footer) == footer
         found[table.stem] = footer
     return found
+
+
+def check_log(ws: Path) -> list[dict]:
+    """Every record is an envelope, names a registered operation that kgfq is
+    said to implement, carries arguments the registry's schema accepts, and a
+    receipt that validates and is the one its table carries."""
+    records = [json.loads(line) for line in (ws / "kgfq.log.jsonl").read_text().splitlines()]
+    assert [r["step"] for r in records] == list(range(1, len(records) + 1))
+    filed = receipts(ws)
+    for r in records:
+        ENVELOPE.validate(r)
+        entry = OPERATIONS[r["operation"]]
+        assert "kgfq" in entry["implemented_by"], r["operation"]
+        jsonschema.Draft202012Validator(entry["args"]).validate(r["args"])
+        assert set(r["args"]) <= set(entry["args"]["properties"]), (r["operation"], r["args"])
+        assert r["client"]["name"] == "kgfq" and r["actor"] is None
+        RECEIPT.validate(r["receipt"])
+        assert r["receipt"]["core"]["kind"] == r["operation"]
+        assert r["receipt"]["core"]["step"] == r["step"]
+        assert [p["origin"] for p in r["pins"]] == [
+            s["origin"] for s in r["receipt"]["core"]["sources"] if s["kind"] == "kgf"
+        ]
+        for wrote in r["outputs"]:
+            core = r["receipt"]["core"]
+            assert wrote == {
+                k: core[k] for k in ("table", "shape", "rows", "grade", "content_hash")
+            }
+    # the latest step to write a name is the one whose receipt the table carries
+    latest = {o["table"]: r["receipt"] for r in records for o in r["outputs"]}
+    assert all(filed[name] == receipt for name, receipt in latest.items())
+    return records
+
+
+def test_every_step_kgfq_logs_is_an_envelope_in_the_registrys_spelling(tmp_path, chem, genes):
+    ws = tmp_path
+    run("endpoints", "add", chem.origin, workspace=ws)
+    run("endpoints", "add", genes.origin, workspace=ws)
+    values = tmp_path / "chems.tsv"
+    values.write_text("?c\n<http://example.org/chem/1>\n<http://example.org/chem/2>\n")
+    main(["--workspace", str(ws), "summary", "chemkg"], out=io.StringIO(), err=io.StringIO())
+    run("schema", "chemkg", "--class", "ex:Chemical", "--children", "properties", workspace=ws)
+    run("count", "chemkg", "? ex:affects ?", workspace=ws)
+    run("count", "chemkg", "?c ex:affects ?g", "--values", str(values), workspace=ws)
+    run("sample", "genekg", "?g ex:inPathway ?p", "-n", "3", workspace=ws)
+    run("distinct", "chemkg", "? ex:affects ?g", "--by", "o", "--top", "2", workspace=ws)
+    run("fetch", "chemkg", "?c ex:affects ?g", "--values", str(values), "--out", "b", workspace=ws)
+    run("fetch", "genekg", '?g rdfs:label "GENE 1"@en', "--max-rows", "5", workspace=ws)
+    records = check_log(ws)
+    assert [(r["operation"], r["args"]) for r in records] == [
+        ("graph_summary", {"graph": "chemkg", "format": "md"}),
+        (
+            "schema",
+            {"graph": "chemkg", "class": "http://example.org/Chemical", "children": "properties"},
+        ),
+        ("count", {"graphs": ["chemkg"], "predicate": "<http://example.org/affects>"}),
+        (
+            "count",
+            {
+                "graphs": ["chemkg"],
+                "subject": "?c",
+                "predicate": "<http://example.org/affects>",
+                "object": "?g",
+                "values": str(values),
+            },
+        ),
+        (
+            "sample",
+            {
+                "graph": "genekg",
+                "subject": "?g",
+                "predicate": "<http://example.org/inPathway>",
+                "object": "?p",
+                "n": 3,
+                "seed": 0,
+            },
+        ),
+        (
+            "distinct",
+            {
+                "graph": "chemkg",
+                "predicate": "<http://example.org/affects>",
+                "object": "?g",
+                "by": "o",
+                "top": 2,
+            },
+        ),
+        (
+            "fetch",
+            {
+                "graph": "chemkg",
+                "subject": "?c",
+                "predicate": "<http://example.org/affects>",
+                "object": "?g",
+                "values": str(values),
+                "out": "b",
+            },
+        ),
+        (
+            "fetch",
+            {
+                "graph": "genekg",
+                "subject": "?g",
+                "predicate": "<http://www.w3.org/2000/01/rdf-schema#label>",
+                "object": '"GENE 1"@en',
+                "max_rows": 5,
+                "out": "label_GENE_1",
+            },
+        ),
+    ]
+    # two graphs on two servers: each step names the origin it read
+    assert {r["pins"][0]["origin"] for r in records} == {chem.origin, genes.origin}
+    assert [len(r["outputs"]) for r in records] == [0, 0, 0, 0, 0, 0, 1, 1]
+    assert records[2]["result"] == {"count": 24, "exact": True, "source": "inventory:predicate"}
+    assert records[2]["receipt"]["core"]["totals"]["requests"] >= 1
+
+
+def test_a_sparql_step_is_an_envelope_too(tmp_path, chem, kgf_sparql):
+    ws = tmp_path
+    run("endpoints", "add", chem.origin, workspace=ws)
+    (tmp_path / "sel.rq").write_text(P + "SELECT ?c ?l WHERE { ?c rdfs:label ?l }")
+    run("sparql", str(tmp_path / "sel.rq"), "--dataset", "chemkg", workspace=ws)
+    run(
+        *("sparql", str(tmp_path / "sel.rq"), "--dataset", "chemkg"),
+        *("--max-requests", "1", "--out", "capped"),
+        workspace=ws,
+        expect=3,
+    )
+    done, capped = check_log(ws)
+    assert done["outputs"][0]["table"] == "sel" and done["result"] == {"contract": "complete"}
+    assert capped["outputs"] == [] and capped["result"]["budget"] == "max_requests"
+    assert capped["receipt"] == receipts(ws)["capped"]
+
+
+def test_another_clients_record_is_an_envelope_kgfq_can_read():
+    """What the explorer would write for an operation kgfq does not have: it
+    validates, and everything a reader needs to show the step, find its table
+    and carry its grade is in fields kgfq understands."""
+    record = {
+        "schema": "kgf.session/1.3",
+        "step": 4,
+        "started": "2026-11-20T15:02:11Z",
+        "elapsed_ms": 812,
+        "client": {"name": "kgf-explorer", "version": "df21dc2", "surface": "page"},
+        "actor": "assistant",
+        "operation": "overlap",
+        "args": {"graphs": ["sawgraph", "biobricks-toxcast"]},
+        "inputs": {},
+        "pins": [
+            {
+                "origin": "https://apps.okn.us/kgf",
+                "dataset": "sawgraph",
+                "version": "2026-04-02",
+                "content_digest": "sha256:0",
+            }
+        ],
+        "outputs": [{"table": "t4", "shape": "bindings", "rows": 12, "grade": "bundle"}],
+        "status": "ok",
+        "labels_fetched": 40,
+    }
+    ENVELOPE.validate(record)
+    assert "kgfq" not in OPERATIONS[record["operation"]]["implemented_by"]
+    jsonschema.Draft202012Validator(OPERATIONS["overlap"]["args"]).validate(record["args"])
+    for schema in ("kgf.session/2.0", "kgfq.log/1"):
+        with pytest.raises(jsonschema.ValidationError):
+            ENVELOPE.validate({**record, "schema": schema})
+    with pytest.raises(jsonschema.ValidationError, match="'operation' is a required property"):
+        ENVELOPE.validate({k: v for k, v in record.items() if k != "operation"})
 
 
 def test_fetch_receipts_validate(tmp_path, chem):

@@ -19,7 +19,6 @@ import json
 import math
 import os
 import re
-import time
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -249,7 +248,6 @@ class Workspace:
     def append_log(self, record: dict[str, Any]) -> dict[str, Any]:
         record = dict(record)
         record.setdefault("step", self.next_step())
-        record.setdefault("time", _now())
         line = json.dumps(record, sort_keys=True, ensure_ascii=False)
         with open(self.log_path, "a", encoding="utf-8") as f:
             f.write(line + "\n")
@@ -357,7 +355,3 @@ def _cell_bytes(v: Any) -> bytes:
         f"a {type(v).__name__} cell has no specified hash encoding: {v!r} "
         "(notes/session-format.md §5 covers null, string, integer, boolean and bytes)"
     )
-
-
-def _now() -> str:
-    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())

@@ -106,12 +106,16 @@ def test_select_files_a_table_a_receipt_and_the_engine_receipt(ws, tmp_path):
     )
     log, _ = run("log", workspace=ws)
     [record] = log["steps"]
-    assert record["command"] == "sparql" and record["status"] == "ok"
+    assert record["operation"] == "sparql" and record["status"] == "ok"
+    assert record["args"]["graphs"] == ["chemkg"] and record["args"]["file"] == str(q)
     assert record["pins"][0]["dataset"] == "chemkg"
-    assert record["receipt"]["outcome"]["contract"] == "complete"
-    assert "requests_by_shape" not in record["receipt"] and record["receipt"]["lint"] == []
+    # the record carries the receipt the footer does; the engine's request
+    # list stays in the engine's own receipt, pointed at
+    assert record["receipt"] == receipt and "requests" not in record["receipt"]["core"]
+    assert record["result"] == {"contract": "complete"}
     assert record["inputs"][str(q)]["kind"] == "external"
-    assert record["output"]["content_hash"] == handle["content_hash"]
+    [wrote] = record["outputs"]
+    assert wrote["content_hash"] == handle["content_hash"] and wrote["shape"] == "bindings"
 
 
 def test_sources_from_the_header_join_across_two_origins(ws, tmp_path):
@@ -169,11 +173,9 @@ def test_abort_at_a_budget_is_a_receipt_without_a_table(ws, tmp_path):
     assert receipt["detail"]["engine"]["exit_code"] == 3
     log, _ = run("log", workspace=ws)
     [record] = log["steps"]
-    assert record["status"] == "ok" and record["output"] == {
-        "contract": "aborted",
-        "rows": 0,
-        "budget": "max_requests",
-    }
+    assert record["status"] == "ok" and record["outputs"] == []
+    assert record["result"] == {"contract": "aborted", "rows": 0, "budget": "max_requests"}
+    assert record["receipt"] == receipt, "a step with no table keeps its receipt in its record"
     # a rerun that completes replaces the receipt and writes the table
     handle, _ = run("sparql", str(q), "--dataset", "chemkg", "--out", "capped", workspace=ws)
     assert handle["rows"] == 12 and (ws / "tables" / "capped.parquet").exists()
@@ -192,7 +194,7 @@ def test_abort_at_a_budget_is_a_receipt_without_a_table(ws, tmp_path):
     )
     assert not (ws / "tables" / "capped.parquet").exists()
     log, _ = run("log", workspace=ws)
-    assert log["steps"][-1]["output"]["replaced_table"] == "capped"
+    assert log["steps"][-1]["result"]["replaced_table"] == "capped"
 
 
 def test_row_budget_writes_the_rows_with_an_approximation(ws, tmp_path):
@@ -308,7 +310,7 @@ def test_ask_and_construct(ws, tmp_path):
     ).exists()
     log, _ = run("log", workspace=ws)
     # the engine counts the answer as one row; the receipt keeps its numbers verbatim
-    assert log["steps"][-1]["output"] == {"contract": "complete", "rows": 1, "boolean": True}
+    assert log["steps"][-1]["result"] == {"contract": "complete", "rows": 1, "boolean": True}
     construct = write(
         tmp_path, "cons.rq", P + "CONSTRUCT { ?c ex:hasLabel ?l } WHERE { ?c rdfs:label ?l }"
     )
@@ -347,7 +349,8 @@ def test_normalize_records_equivalent_rewrites_and_the_answer_is_unchanged(ws, t
     assert f"VALUES ?c {{ {CHEM.format(4)} {CHEM.format(6)} }}" in receipt["detail"]["query"]
     assert "FILTER" in receipt["detail"]["query"], "the filter stays as the residual check"
     log, _ = run("log", workspace=ws)
-    assert log["steps"][-1]["receipt"]["normalizations"] == ["KGFQ002", "KGFQ001"]
+    applied = log["steps"][-1]["receipt"]["detail"]["normalizations"]
+    assert [n["rule"] for n in applied if n["applied"]] == ["KGFQ002", "KGFQ001"]
 
 
 def test_normalize_declines_what_it_cannot_prove():

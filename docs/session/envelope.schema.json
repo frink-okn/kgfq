@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kgf.okn.us/schemas/kgf.session/1",
+  "title": "KGF session log record (kgfq C9, D15; kgf-explorer D1)",
+  "description": "One line of a session's log per operation, written by the client and never by the model. Shared by the clients that write sessions (notes/session-format.md §3). These fields are the envelope: what every reader understands, whichever client wrote the record and whether or not the reader implements the operation. `args`, `result` and the receipt's `detail` are the operation's own; a reader that does not implement it keeps them as they came, shows the step, loads its tables, and declines by name to replay it. Unknown fields are ignored, never refused, and nothing is closed but the major version: a reader accepts its own major and any minor.",
+  "type": "object",
+  "required": ["schema", "step", "client", "operation", "args", "inputs", "pins", "outputs", "started", "status"],
+  "properties": {
+    "schema": {"type": "string", "pattern": "^kgf\\.session/1\\.[0-9]+$"},
+    "step": {"type": "integer", "minimum": 1, "description": "The record's number in its session. Other records name it: an input derived from step 3."},
+    "started": {"type": "string", "format": "date-time"},
+    "elapsed_ms": {"type": "number"},
+    "client": {
+      "type": "object",
+      "required": ["name"],
+      "description": "Which program wrote the record.",
+      "properties": {
+        "name": {"type": "string", "description": "`kgfq` or `kgf-explorer` today."},
+        "version": {"type": "string", "description": "A release, or a build (`git describe`)."},
+        "surface": {"type": "string", "description": "How it was driven: kgfq's `cli`, `mcp` or `library`; the explorer's `page`."}
+      }
+    },
+    "actor": {
+      "type": ["string", "null"],
+      "description": "Who asked: `user`, `assistant`, or `page` for a step the page ran on a model's map. Null where the client cannot tell, as a command line cannot."
+    },
+    "operation": {"type": "string", "description": "A name from the registry (docs/session/operations.yaml)."},
+    "args": {"type": "object", "description": "The operation's arguments, in the registry's spelling whatever the surface took."},
+    "inputs": {
+      "type": "object",
+      "description": "Each value, file or table the step consumed, classified against earlier steps' outputs: `derived`, with the step and table that produced it; `asserted`, typed by a person or a model; `external`, a file from outside the session, by content hash.",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["kind"],
+        "properties": {
+          "kind": {"type": "string"},
+          "table": {"type": "string"},
+          "step": {"type": ["integer", "null"]},
+          "grade": {"type": ["string", "null"]},
+          "path": {"type": "string"},
+          "sha256": {"type": "string"}
+        }
+      }
+    },
+    "pins": {
+      "type": "array",
+      "description": "Every graph the step read, at the release it read. The digest is the graph's identity and the origin is where it was fetched: a step over two graphs on two servers names two origins, and a graph that has moved is replayed elsewhere and checked by digest.",
+      "items": {
+        "type": "object",
+        "required": ["origin", "dataset", "version", "content_digest"],
+        "properties": {
+          "origin": {"type": "string"},
+          "dataset": {"type": "string"},
+          "dataset_iri": {"type": ["string", "null"]},
+          "version": {"type": "string"},
+          "content_digest": {"type": "string"}
+        }
+      }
+    },
+    "outputs": {
+      "type": "array",
+      "description": "The tables the step wrote; empty for a step that wrote none.",
+      "items": {
+        "type": "object",
+        "required": ["table"],
+        "properties": {
+          "table": {"type": "string", "description": "The table's name, unique in the session: `tables/<table>.parquet`."},
+          "shape": {"type": ["string", "null"]},
+          "rows": {"type": ["integer", "null"]},
+          "grade": {"type": ["string", "null"]},
+          "content_hash": {"type": ["string", "null"]},
+          "path": {"type": "string", "description": "Only for a table written outside the session's `tables/`."}
+        }
+      }
+    },
+    "result": {"type": "object", "description": "What the step answered without a table: a count, an ASK, how a run ended. The operation's own."},
+    "status": {"type": "string", "description": "`ok` or `error`."},
+    "error": {
+      "type": ["string", "object"],
+      "description": "A server's problem document (RFC 9457) verbatim, or the client's own refusal as text."
+    },
+    "receipt": {"type": "object", "description": "The step's receipt, whole (docs/session/receipt.schema.json): the one its table carries in its footer, or the only copy when the step wrote no table."}
+  }
+}

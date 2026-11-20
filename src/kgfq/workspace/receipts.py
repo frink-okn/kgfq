@@ -120,6 +120,17 @@ def completeness(records: Iterable[RequestRecord]) -> dict[str, Any]:
     }
 
 
+def totals_of(records: Iterable[RequestRecord]) -> dict[str, Any]:
+    records = list(records)
+    return {
+        "requests": len(records),
+        "bindings_requests": sum(1 for r in records if r.bindings is not None),
+        "bytes_wire": sum(r.bytes_wire for r in records),
+        "bytes_decoded": sum(r.bytes_decoded for r in records),
+        "elapsed_ms": round(sum(r.elapsed_ms for r in records), 3),
+    }
+
+
 def fetch_receipt(
     *,
     step: int | None,
@@ -146,17 +157,29 @@ def fetch_receipt(
         shape="bindings",
         pattern=pattern,
         requests=request_entries(records),
-        totals={
-            "requests": len(records),
-            "bindings_requests": sum(1 for r in records if r.bindings is not None),
-            "bytes_wire": sum(r.bytes_wire for r in records),
-            "bytes_decoded": sum(r.bytes_decoded for r in records),
-            "elapsed_ms": round(sum(r.elapsed_ms for r in records), 3),
-        },
+        totals=totals_of(records),
         completeness=completeness(records),
         approximations=approximations,
         inputs=inputs,
         detail={"intent": dict(intent), "plan": dict(plan) if plan else None},
+    )
+
+
+def request_receipt(
+    *, step: int | None, kind: str, release: Release, trace: Trace
+) -> dict[str, Any]:
+    """The receipt of a step that asked one release something and wrote no
+    table: a summary, a schema page, a count, a sample. Its log record is the
+    only place it is kept."""
+    records = trace.records
+    return new_receipt(
+        kind=kind,
+        step=step,
+        grade="bundle",
+        sources=[source_of(release)],
+        requests=request_entries(records),
+        totals=totals_of(records),
+        completeness=completeness(records),
     )
 
 

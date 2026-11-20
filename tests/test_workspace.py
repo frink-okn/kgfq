@@ -5,6 +5,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
+from kgfq import __version__
 from kgfq.workspace.log import Step, classify_file, weakest_grade
 from kgfq.workspace.receipts import new_receipt
 from kgfq.workspace.store import Pin, TableHash, Workspace, WorkspaceError
@@ -159,15 +160,27 @@ def test_endpoints_and_pins(tmp_path):
 
 def test_log_steps_and_classification(tmp_path):
     ws = Workspace(tmp_path)
-    step = Step(ws, "cli", "fetch", {"ds": "chemkg"})
+    step = Step(ws, "cli", "fetch", {"graph": "chemkg"})
     assert step.step == 1
-    ws.write_table("genes", triples([("http://g/1", "p", "http://x/1")]), receipt())
-    step.output(table="genes")
+    info = ws.write_table("genes", triples([("http://g/1", "p", "http://x/1")]), receipt())
+    step.table(info.receipt)
     rec = step.finish()
-    assert rec["step"] == 1 and rec["status"] == "ok" and rec["schema"] == "kgfq.log/1"
+    assert rec["step"] == 1 and rec["status"] == "ok" and rec["schema"] == "kgf.session/1.0"
+    assert rec["client"] == {"name": "kgfq", "version": __version__, "surface": "cli"}
+    assert rec["actor"] is None and rec["operation"] == "fetch"
+    assert rec["outputs"] == [
+        {
+            "table": "genes",
+            "shape": "triples",
+            "rows": 1,
+            "grade": "bundle",
+            "content_hash": info.content_hash,
+        }
+    ]
     assert ws.read_log() == [rec]
 
-    step2 = Step(ws, "cli", "count", {})
+    step2 = Step(ws, "mcp", "count", {}, actor="assistant")
+    assert step2.record["actor"] == "assistant" and step2.record["client"]["surface"] == "mcp"
     assert step2.step == 2
     got = step2.input_values(["http://g/1", "http://x/1", "http://nowhere"])
     assert got["http://g/1"] == {"kind": "derived", "table": "genes", "step": 1, "grade": "bundle"}

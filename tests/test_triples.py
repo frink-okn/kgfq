@@ -80,7 +80,7 @@ def test_export_writes_a_file_and_is_not_a_step(ws, source):
         "path": str(path),
     }
     assert graph(path.read_text(encoding="utf-8")) == set(source)
-    assert [r["command"] for r in Workspace(ws).read_log()] == ["fetch"]
+    assert [r["operation"] for r in Workspace(ws).read_log()] == ["fetch"]
 
 
 def test_a_bound_fetch_exports_the_rows_its_values_reached(ws, source, tmp_path):

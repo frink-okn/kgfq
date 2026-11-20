@@ -44,6 +44,10 @@ measured cost of a rule that exists twice is in kgfq §0.
 
 ## 3. The envelope
 
+*Landed in kgfq 2026-11-20* as `kgf.session/1.0` (`kgfq.workspace.log.Step`,
+`docs/session/envelope.schema.json`): every record kgfq writes is validated against it and
+against the registry in `tests/test_session_format.py`.
+
 | field | what it is |
 |---|---|
 | `schema` | `kgf.session/<major>.<minor>`. A reader accepts its own major and warns on a newer minor. |
@@ -55,10 +59,11 @@ measured cost of a rule that exists twice is in kgfq §0.
 | `args` | the operation's arguments, in its registry schema. Payload, not envelope: a reader that does not know the operation keeps them verbatim and shows them as JSON. |
 | `inputs` | each consumed value or table, classified `derived` (with `step` and `table`), `asserted`, or `external` (with `sha256`), as kgfq C9 does now. |
 | `pins` | every graph the step read: `origin`, `dataset`, `version`, `content_digest`, `dataset_iri`. |
-| `outputs` | tables the step wrote: `table`, `shape`, `rows`, `grade`, `content_hash`. Empty for a step that wrote none. |
+| `outputs` | tables the step wrote: `table`, `shape`, `rows`, `grade`, `content_hash`; `path` only for one written outside the session's `tables/`. Empty for a step that wrote none. |
+| `result` | what a step answered without a table: a count, an ASK, how a run ended. Payload, as `args` is. Added while building: kgfq's `count` writes no table, and its answer is the step's evidence. |
 | `status` | `ok` or `error`. |
 | `error` | the server's problem document (RFC 9457) verbatim, or the client's refusal as text when no request was made. |
-| `receipt` | `{core, detail}` (§5). |
+| `receipt` | `{schema, core, detail}` (§5), whole: the one the table's footer carries, or the only copy for a step with no table. |
 
 ```json
 {"schema": "kgf.session/1.0", "step": 4, "started": "2026-11-20T15:02:11Z", "elapsed_ms": 812,
@@ -322,10 +327,10 @@ tool descriptions: those are each surface's own and are measured by its own runs
 
 Changes this asks of each:
 
-- **kgfq:** `skin` becomes `client`; `actor` is added; `command` becomes `operation` and
-  `args` takes registry spelling; the schema string changes; fetch tables become bindings
-  (§4.3); a receipt splits into core and detail. Workspaces written before this are not
-  read: none is being kept (2026-11-20).
+- **kgfq** (all landed 2026-11-20): `skin` becomes `client`; `actor` is added; `command`
+  becomes `operation` and `args` takes registry spelling; the schema string changes; fetch
+  tables become bindings (§4.3); a receipt splits into core and detail. Workspaces written
+  before this are not read: none is being kept.
 - **kgf-explorer:** the envelope fields its records lack (pins, inputs, outputs with hashes);
   the content hash; `status` separated from the receipt's contract; export and import (below).
   Its tables and its `bind` are unchanged.
@@ -408,6 +413,11 @@ Opening a session: a zip of the workspace, a chosen directory, or
 
 ## 11. Open, and later
 
+- **A refused step.** kgfq writes no record for a step a server refuses, or that it
+  refuses itself before any request; the explorer records both. An agent's failed attempts
+  are part of what happened, and the envelope has `status` and `error` for them.
+- **`list_graphs` as a step.** `kgfq datasets` writes no record; the explorer's
+  `list_graphs` does.
 - **Multi-server sessions in the explorer.** It talks to one server. Loading a kgfq session
   whose graphs live on two servers needs it to hold several; after kgfq reaches parity, so
   that the two clients do not change at once.

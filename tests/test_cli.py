@@ -128,7 +128,7 @@ def test_fetch_logs_and_classifies_inputs(ws, tmp_path):
     _, _ = run("count", "genekg", "<http://example.org/gene/G9> ? ?", workspace=ws)
     log, _ = run("log", workspace=ws)
     steps = {r["step"]: r for r in log["steps"]}
-    assert [r["command"] for r in log["steps"]] == ["fetch", "fetch", "count"]
+    assert [r["operation"] for r in log["steps"]] == ["fetch", "fetch", "count"]
     assert steps[2]["inputs"]["http://example.org/chem/1"] == {
         "kind": "derived",
         "table": "label",
@@ -136,8 +136,25 @@ def test_fetch_logs_and_classifies_inputs(ws, tmp_path):
         "grade": "bundle",
     }
     assert steps[3]["inputs"]["http://example.org/gene/G9"] == {"kind": "asserted"}
-    assert steps[1]["pins"][0]["dataset"] == "chemkg" and steps[1]["receipt"]["grade"] == "bundle"
-    assert steps[1]["output"]["content_hash"] == handle["content_hash"]
+    assert steps[1]["pins"][0]["dataset"] == "chemkg"
+    assert steps[1]["args"] == {
+        "graph": "chemkg",
+        "predicate": "<http://www.w3.org/2000/01/rdf-schema#label>",
+        "out": "label",
+    }
+    [wrote] = steps[1]["outputs"]
+    assert wrote == {
+        "table": "label",
+        "shape": "bindings",
+        "rows": 12,
+        "grade": "bundle",
+        "content_hash": handle["content_hash"],
+    }
+    # the record carries the receipt the table's footer does
+    assert steps[1]["receipt"] == run("receipt", "label", workspace=ws)[0]
+    assert steps[3]["args"] == {"graphs": ["genekg"], "subject": "<http://example.org/gene/G9>"}
+    assert steps[3]["outputs"] == [] and steps[3]["result"]["count"] == 0
+    assert steps[3]["receipt"]["core"]["kind"] == "count"
 
 
 def test_fetch_to_csv_path_with_receipt_beside_it(ws, tmp_path):
@@ -311,7 +328,7 @@ def test_a_fetched_tables_columns_are_the_patterns_variables(ws, tmp_path):
     _, err = run("fetch", "chemkg", "?o ex:affects ?", workspace=ws, expect=2)
     assert err.rstrip().endswith("e.g. `?o <http://example.org/affects> ?object`.")
     log, _ = run("log", workspace=ws)
-    assert [r["command"] for r in log["steps"]] == ["fetch"]
+    assert [r["operation"] for r in log["steps"]] == ["fetch"]
 
 
 def test_count_fetch_and_sample_refuse_an_equality_get_cannot_carry(ws):
