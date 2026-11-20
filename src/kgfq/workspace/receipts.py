@@ -48,6 +48,7 @@ def new_receipt(
     pattern: Mapping[str, str] | None = None,
     approximations: Iterable[str] = (),
     inputs: Mapping[str, Any] | None = None,
+    bindings: Mapping[str, Any] | None = None,
     detail: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """A receipt in the shared layout (``notes/session-format.md`` §5,
@@ -73,6 +74,8 @@ def new_receipt(
     }
     if requests is not None:
         core["requests"] = [dict(r) for r in requests]
+    if bindings is not None:
+        core["bindings"] = dict(bindings)
     return {"schema": RECEIPT_SCHEMA, "core": core, "detail": dict(detail or {})}
 
 
@@ -142,6 +145,7 @@ def fetch_receipt(
     pattern: Mapping[str, str] | None = None,
     approximations: Iterable[str] = (),
     inputs: Mapping[str, Any] | None = None,
+    bindings: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The receipt of a table read from one release. Its ``shape`` is
     ``bindings``; ``pattern`` is the one pattern the table answers, each
@@ -161,6 +165,7 @@ def fetch_receipt(
         completeness=completeness(records),
         approximations=approximations,
         inputs=inputs,
+        bindings=bindings,
         detail={"intent": dict(intent), "plan": dict(plan) if plan else None},
     )
 
@@ -172,6 +177,7 @@ def request_receipt(
     records: Iterable[RequestRecord],
     release: Release | None = None,
     sources: Iterable[Mapping[str, Any]] | None = None,
+    bindings: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """The receipt of a step that asked something and wrote no table: a
     summary, a schema page, a count, a sample, of one ``release``; or a listing
@@ -186,6 +192,7 @@ def request_receipt(
         requests=request_entries(records),
         totals=totals_of(records),
         completeness=completeness(records),
+        bindings=bindings,
     )
 
 

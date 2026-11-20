@@ -98,14 +98,16 @@
         },
         "bindings": {
           "type": "object",
-          "description": "For a bound step: how many input tuples were sent and how many found nothing, with a sample of those (kgfq C6's unmatched report, kgf-explorer D8).",
+          "description": "For a bound step: how many of the distinct input tuples found something, and a sample of those that found nothing (kgfq C6's unmatched report, kgf-explorer D8). The number to read before trusting the next join. `unmatched` is null where the read stopped early and cannot say.",
           "properties": {
-            "table": {"type": "string"},
+            "vars": {"type": "array", "items": {"type": "string"}, "description": "The bound variables, in the order a tuple gives them."},
+            "table": {"type": "string", "description": "The table bound from, with `columns`: variable to column."},
             "columns": {"type": "object"},
+            "values": {"type": "string", "description": "kgfq: the bindings file, where it was one."},
             "sent": {"type": "integer"},
             "matched": {"type": "integer"},
-            "unmatched": {"type": "integer"},
-            "unmatched_sample": {"type": "array"}
+            "unmatched": {"type": ["integer", "null"]},
+            "unmatched_sample": {"type": "array", "description": "The first few unmatched tuples, each a list of terms in doc 03 §3.3 syntax."}
           }
         },
         "approximations": {"type": "array", "items": {"type": "string"}},
