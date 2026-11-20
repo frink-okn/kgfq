@@ -699,6 +699,12 @@ contend for a writer lock.
 
 ### C9. The workspace and the log
 
+*Proposed 2026-11-20* (`notes/session-format.md`, issue #3): one session format shared with
+`../kgf-explorer` — an envelope every reader understands, per-operation payloads, an operation
+registry, shared fixtures. It would replace `kgfq.log/1` and `kgfq.receipt/3`, change C6's
+fetched-table columns to the pattern's variables, and put `kgfq-mcp` (§7) after parity with the
+explorer's operations. Not decided; this unit and C6 stand until it is.
+
 The directory an analysis lives in (D15): the current directory, or `--workspace`.
 
 ```
