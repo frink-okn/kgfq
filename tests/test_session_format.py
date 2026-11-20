@@ -86,6 +86,7 @@ def test_every_step_kgfq_logs_is_an_envelope_in_the_registrys_spelling(tmp_path,
     run("endpoints", "add", genes.origin, workspace=ws)
     values = tmp_path / "chems.tsv"
     values.write_text("?c\n<http://example.org/chem/1>\n<http://example.org/chem/2>\n")
+    run("list_graphs", workspace=ws)
     main(["--workspace", str(ws), "summary", "chemkg"], out=io.StringIO(), err=io.StringIO())
     run("schema", "chemkg", "--class", "ex:Chemical", "--children", "properties", workspace=ws)
     run("count", "chemkg", "? ex:affects ?", workspace=ws)
@@ -96,6 +97,7 @@ def test_every_step_kgfq_logs_is_an_envelope_in_the_registrys_spelling(tmp_path,
     run("fetch", "genekg", '?g rdfs:label "GENE 1"@en', "--max-rows", "5", workspace=ws)
     records = check_log(ws)
     assert [(r["operation"], r["args"]) for r in records] == [
+        ("list_graphs", {}),
         ("graph_summary", {"graph": "chemkg", "format": "md"}),
         (
             "schema",
@@ -157,10 +159,13 @@ def test_every_step_kgfq_logs_is_an_envelope_in_the_registrys_spelling(tmp_path,
         ),
     ]
     # two graphs on two servers: each step names the origin it read
-    assert {r["pins"][0]["origin"] for r in records} == {chem.origin, genes.origin}
-    assert [len(r["outputs"]) for r in records] == [0, 0, 0, 0, 0, 0, 1, 1]
-    assert records[2]["result"] == {"count": 24, "exact": True, "source": "inventory:predicate"}
-    assert records[2]["receipt"]["core"]["totals"]["requests"] >= 1
+    assert {r["pins"][0]["origin"] for r in records[1:]} == {chem.origin, genes.origin}
+    assert [len(r["outputs"]) for r in records] == [0, 0, 0, 0, 0, 0, 0, 1, 1]
+    assert records[3]["result"] == {"count": 24, "exact": True, "source": "inventory:predicate"}
+    assert records[3]["receipt"]["core"]["totals"]["requests"] >= 1
+    # the listing read no release: nothing pinned, and its sources are the origins
+    assert records[0]["pins"] == [] and records[0]["result"]["graphs"] == 2
+    assert {s["kind"] for s in records[0]["receipt"]["core"]["sources"]} == {"origin"}
 
 
 def test_a_sparql_step_is_an_envelope_too(tmp_path, chem, kgf_sparql):
@@ -377,6 +382,8 @@ def test_every_operation_kgfq_claims_is_a_command_it_has():
     }
     assert all(callable(getattr(Cli, name, None)) for name in claimed), claimed
     assert claimed == {
-        *("datasets", "summary", "schema", "count"),
+        *("list_graphs", "graph_summary", "schema", "count"),
         *("sample", "distinct", "fetch", "sparql"),
     }
+    # where kgfq has an operation it goes by the registry's name
+    assert all(e["implemented_by"].get("kgfq", name) == name for name, e in OPERATIONS.items())

@@ -50,6 +50,46 @@ def test_endpoints_and_datasets(ws, chem, genes):
     assert [d["id"] for d in payload["datasets"]] == ["genekg"]
 
 
+def test_a_command_goes_by_its_registry_name_and_its_old_one(ws, chem):
+    """`list_graphs` and `graph_summary` are the session format's names for
+    what kgfq first called `datasets` and `summary`; both spellings run, and
+    so does the hyphenated one."""
+    listed = [run(name, workspace=ws)[0] for name in ("list_graphs", "list-graphs", "datasets")]
+    assert listed[0] == listed[1] == listed[2] and len(listed[0]["datasets"]) == 2
+    cards = [
+        run(name, "chemkg", workspace=ws)[0]
+        for name in ("graph_summary", "graph-summary", "summary")
+    ]
+    assert cards[0] == cards[1] == cards[2] and "Chem KG" in cards[0]
+    log, _ = run("log", workspace=ws)
+    assert [r["operation"] for r in log["steps"]] == ["list_graphs"] * 3 + ["graph_summary"] * 3
+
+
+def test_list_graphs_is_a_step_that_names_every_origin_it_asked(ws, chem, genes):
+    """Which graphs there were to choose from is part of what happened. The step
+    reads service descriptors and no release, so it pins nothing; an origin that
+    did not answer is in its result, and the reachable ones are still listed."""
+    run("endpoints", "add", "http://127.0.0.1:9", workspace=ws)
+    payload, err = run("list_graphs", "--text", "pathways", workspace=ws)
+    assert [d["id"] for d in payload["datasets"]] == ["genekg"] and "unreachable" in err
+    log, _ = run("log", workspace=ws)
+    [record] = log["steps"]
+    assert record["operation"] == "list_graphs" and record["args"] == {"text": "pathways"}
+    assert record["pins"] == [] and record["outputs"] == []
+    assert record["result"]["graphs"] == 2 and record["result"]["shown"] == 1
+    assert list(record["result"]["unreachable"]) == ["http://127.0.0.1:9"]
+    core = record["receipt"]["core"]
+    assert core["kind"] == "list_graphs"
+    assert core["sources"] == [
+        {"kind": "origin", "grade": "bundle", "origin": o}
+        for o in (chem.origin, genes.origin, "http://127.0.0.1:9")
+    ]
+    assert sorted(q["url"].rstrip("/") for q in core["requests"]) == sorted(
+        [chem.origin, genes.origin]
+    )
+    assert all(q["request_id"] and q["status"] == 200 for q in core["requests"])
+
+
 def test_summary_schema_count_sample(ws):
     md, _ = run("summary", "chemkg", workspace=ws)
     assert "Chem KG" in md

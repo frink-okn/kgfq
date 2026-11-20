@@ -842,7 +842,19 @@ arguments the registry's schema accepts and no other, and a receipt that validat
 equals its table's footer; two steps against two servers each name the origin they read. A
 record as the explorer would write it, for an operation kgfq does not have, validates.
 Unchanged, and to settle (`notes/session-format.md` §11): a step a server refuses, or kgfq
-refuses before any request, writes no record; `datasets` writes none either.
+refuses before any request, writes no record; `datasets` writes none either (it does since
+the same day, below).
+
+*Landed 2026-11-20 — `list_graphs` is a step.* It read each origin's service descriptor and
+logged nothing, against this unit's own rule and unlike `../kgf-explorer`, where it is an
+operation like any other. Which graphs there were to choose from is part of what happened.
+The record pins nothing, since no release is read. Its receipt's sources are the origins
+asked, of a new source kind `origin` (a KGF server asked what it serves), with each
+descriptor request and its `KGF-Request-Id`. Its result counts the graphs, those shown
+under `--text`, and the origins that did not answer. It writes no table: a listing's shape
+is open (`notes/session-format.md` §11). The grade is `bundle`, as everything a KGF server
+says is graded; a listing can change where a release cannot, and with no table the grade
+reaches nothing.
 
 *Landed 2026-11-20 — the format's fixture.* `docs/session/fixtures/kgfq/` is a seven-step
 session kgfq wrote against the two fixture servers, kept so that a second client has
@@ -1165,8 +1177,8 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | command | rung | backed by |
 |---|---|---|
 | `kgfq endpoints add\|list\|remove <url>` | find | the workspace's graph endpoints (D14, C2) |
-| `kgfq datasets [--iri X \| --class C \| --text Q]` | find | registry + service descriptors (C2) |
-| `kgfq summary <ds>` | orient | `/summary`, Markdown to the terminal |
+| `kgfq list_graphs [--iri X \| --class C \| --text Q]` (was `datasets`) | find | registry + service descriptors (C2) |
+| `kgfq graph_summary <ds>` (was `summary`) | orient | `/summary`, Markdown to the terminal |
 | `kgfq schema <ds> [--class C \| --predicate P \| --projection …]` | drill | `/schema` |
 | `kgfq count <ds> <pattern> [--values file]` | verify | `/count`, batch form |
 | `kgfq sample <ds> <pattern> [-n]` | verify | `/sample` |
@@ -1237,6 +1249,12 @@ Every position of every pattern is answered. An earlier draft of the server oper
 `/facet`, refused three shapes, and was withdrawn before review. Output goes to stdout
 only, as `count`'s does. A table of values with its own receipt would need a receipt
 shape for values, which is not decided.
+
+*Changed 2026-11-20 — a command goes by its operation's registry name.* `datasets` is
+`list_graphs` and `summary` is `graph_summary`, the names `docs/session/operations.yaml`
+gives them, which are `../kgf-explorer`'s: the word typed, the word in the log and, when
+`kgfq-mcp` lands, the tool's name are one. The first names and the hyphenated spellings
+still run (`ALIASES`). The other commands already had their operations' names.
 
 Conventions: JSON on stdout when not a TTY, tables when it is; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the

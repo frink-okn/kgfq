@@ -166,17 +166,23 @@ def fetch_receipt(
 
 
 def request_receipt(
-    *, step: int | None, kind: str, release: Release, trace: Trace
+    *,
+    step: int | None,
+    kind: str,
+    records: Iterable[RequestRecord],
+    release: Release | None = None,
+    sources: Iterable[Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """The receipt of a step that asked one release something and wrote no
-    table: a summary, a schema page, a count, a sample. Its log record is the
-    only place it is kept."""
-    records = trace.records
+    """The receipt of a step that asked something and wrote no table: a
+    summary, a schema page, a count, a sample, of one ``release``; or a listing
+    across origins, whose ``sources`` name them. Its log record is the only
+    place it is kept."""
+    records = list(records)
     return new_receipt(
         kind=kind,
         step=step,
         grade="bundle",
-        sources=[source_of(release)],
+        sources=[source_of(release)] if release is not None else list(sources or []),
         requests=request_entries(records),
         totals=totals_of(records),
         completeness=completeness(records),

@@ -56,7 +56,7 @@ operations:
       type: object
       properties:
         text: {type: string, description: "kgfq: a substring of id, title or description."}
-    implemented_by: {kgf-explorer: list_graphs, kgfq: datasets}
+    implemented_by: {kgf-explorer: list_graphs, kgfq: list_graphs}
 
   graph_summary:
     meaning: >-
@@ -68,7 +68,7 @@ operations:
       properties:
         graph: {type: string}
         format: {type: string, enum: [md, json], description: "kgfq: the card's format."}
-    implemented_by: {kgf-explorer: graph_summary, kgfq: summary}
+    implemented_by: {kgf-explorer: graph_summary, kgfq: graph_summary}
 
   schema:
     meaning: >-

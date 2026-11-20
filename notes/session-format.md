@@ -353,9 +353,9 @@ and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the 
 
 | operation | kgf-explorer | kgfq | for parity |
 |---|---|---|---|
-| `list_graphs` | `list_graphs` (one server) | `datasets` (every origin) | have |
+| `list_graphs` | `list_graphs` (one server) | `list_graphs` (every origin; was `datasets`), a step since 2026-11-20 | have |
 | `endpoints` | a page setting, not a step | `endpoints` | kgfq only, by design (D14) |
-| `graph_summary` | `graph_summary` | `summary` | have |
+| `graph_summary` | `graph_summary` | `graph_summary` (was `summary`) | have |
 | `schema` | graph, class, class+predicate | plus datatype, projection, view | have; args to reconcile |
 | `search` | one graph's `/search` | — (C7 `resolve` planned) | **kgfq needs** |
 | `count` | many graphs, bind from a table | one graph, `--values` | **kgfq needs** many graphs and `bind` |
@@ -424,8 +424,6 @@ Opening a session: a zip of the workspace, a chosen directory, or
 - **A refused step.** kgfq writes no record for a step a server refuses, or that it
   refuses itself before any request; the explorer records both. An agent's failed attempts
   are part of what happened, and the envelope has `status` and `error` for them.
-- **`list_graphs` as a step.** `kgfq datasets` writes no record; the explorer's
-  `list_graphs` does.
 - **Multi-server sessions in the explorer.** It talks to one server. Loading a kgfq session
   whose graphs live on two servers needs it to hold several; after kgfq reaches parity, so
   that the two clients do not change at once.
