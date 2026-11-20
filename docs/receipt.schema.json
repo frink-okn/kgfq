@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/3",
+  "$id": "https://kgf.okn.us/schemas/kgfq.receipt/4",
   "title": "kgfq receipt (C6, D5, D17)",
-  "description": "Attached to every table as a sidecar and in the Parquet footer under `kgfq.receipt`, and written as a sidecar alone for a step that produced no table (a SPARQL run aborted at a budget). What makes an approximate answer a finding rather than a bug. Version 2 adds kind `sparql`: multiple graded sources, the query as run, the lint and normalization record, the engine's outcome and budget, requests folded by shape, and a pointer to the engine's own receipt in place of a copy of its request list. Version 3 reads `completeness` from what the client did with each response that carried the table's rows, not from the server's per-page flag: a page limit or a budget interruption (`time_budget`, `response_bytes`) whose cursor was followed no longer makes a table incomplete, and a read stopped with rows left (`max_rows`) always does. It adds `completeness.incomplete_because` and each request's `continued` and `stopped`.",
+  "description": "Attached to every table as a sidecar and in the Parquet footer under `kgfq.receipt`, and written as a sidecar alone for a step that produced no table (a SPARQL run aborted at a budget). What makes an approximate answer a finding rather than a bug. Version 2 adds kind `sparql`: multiple graded sources, the query as run, the lint and normalization record, the engine's outcome and budget, requests folded by shape, and a pointer to the engine's own receipt in place of a copy of its request list. Version 3 reads `completeness` from what the client did with each response that carried the table's rows, not from the server's per-page flag: a page limit or a budget interruption (`time_budget`, `response_bytes`) whose cursor was followed no longer makes a table incomplete, and a read stopped with rows left (`max_rows`) always does. It adds `completeness.incomplete_because` and each request's `continued` and `stopped`. Version 4 states the table's layout: `shape` is `bindings` (four columns per variable: the value, then its `_kind`, `_lang` and `_datatype`) or `triples` (`s`, `p`, `o` and the object's three companions), and a fetched table's `pattern` is the one pattern its rows answer. A fetched table's columns are now its pattern's variables, a constant position having none, and its `binding` index column is gone: a bound variable is a column. The content hash is the specified encoding (`kgf.table-hash/1`).",
   "type": "object",
   "required": ["schema", "kind", "grade", "created"],
   "properties": {
-    "schema": {"const": "kgfq.receipt/3"},
+    "schema": {"const": "kgfq.receipt/4"},
     "kind": {"enum": ["fetch", "hydrate", "labels", "derived", "import", "resolve", "sparql"]},
     "step": {"type": ["integer", "null"], "description": "The log step that produced the table."},
     "grade": {"enum": ["bundle", "sparql", "external", "asserted"], "description": "D17 source grade; a derived table takes the minimum over its inputs, a `sparql` run the minimum over its sources."},
@@ -37,6 +37,12 @@
           "version": {"type": "string"}, "content_digest": {"type": "string"}
         }
       }
+    },
+    "shape": {"enum": ["bindings", "triples", null], "description": "The table's layout; null for a receipt with no table. No reader infers it from the columns."},
+    "pattern": {
+      "type": ["object", "null"],
+      "description": "For a table that answers one pattern: each of `s`, `p`, `o` as a term in doc 03 §3.3 syntax or the `?variable` whose columns hold it. Substituting a row's values gives the triple it stands for.",
+      "properties": {"s": {"type": "string"}, "p": {"type": "string"}, "o": {"type": "string"}}
     },
     "query": {"type": "string", "description": "For kind `sparql`: the query text as run, verbatim."},
     "original_query": {"type": ["string", "null"], "description": "The text as given, when `--normalize` changed it."},
@@ -104,7 +110,7 @@
     "inputs": {"type": "object", "description": "Each input classified derived/asserted/external (see log-record.schema.json).", "additionalProperties": {"type": "object"}},
     "statement": {"type": "string", "description": "For kind `derived`: the SQL that produced the table."},
     "table": {"type": "string"}, "rows": {"type": "integer"}, "columns": {"type": "array", "items": {"type": "string"}},
-    "content_hash": {"type": "string", "description": "sha256 over the canonically sorted rows; order-independent."},
+    "content_hash": {"type": "string", "description": "`sha256:` and the hex digest of the table's rows in the `kgf.table-hash/1` encoding (notes/session-format.md §5); independent of row order."},
     "created": {"type": "string", "format": "date-time"}
   }
 }

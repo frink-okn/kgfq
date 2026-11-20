@@ -85,9 +85,12 @@ def sparql_receipt(
     engine_receipt: dict[str, Any] | None,
     inputs: Mapping[str, Any] | None = None,
     approximations: Iterable[str] = (),
+    shape: str | None = None,
 ) -> dict[str, Any]:
     """Wrap one engine run. ``engine_receipt`` is the pointer — path relative to
-    the workspace, sha256, schema — to the receipt the engine wrote.
+    the workspace, sha256, schema — to the receipt the engine wrote. ``shape``
+    is the table's, when the run left one: ``bindings`` for SELECT, ``triples``
+    for CONSTRUCT and DESCRIBE.
 
     Completeness is the engine's contract, never its responses' flags: 27 of the
     corpus's 58 complete runs have ``page_limit`` responses whose cursors the
@@ -116,6 +119,7 @@ def sparql_receipt(
         "step": step,
         "grade": weakest_grade(str(s.get("grade", "asserted")) for s in sources),
         "sources": [dict(s) for s in sources],
+        "shape": shape,
         "query": query,
         "original_query": original_query,
         "normalizations": list(normalizations),

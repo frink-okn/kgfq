@@ -155,7 +155,7 @@ class Pattern:
             lines += [
                 "A column the pattern does not name binds nothing: rows that differ only "
                 "there would repeat, and a bind-join and a filtered fetch would disagree.",
-                "Leave it out and join it back on the table's `binding` index, "
+                "Leave it out and join it back on a bound variable's column, "
                 + (
                     f"or name the position it binds, e.g. `{example}`."
                     if example

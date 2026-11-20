@@ -83,18 +83,18 @@ def test_count_and_fetch_with_values_file(ws, tmp_path):
         workspace=ws,
     )
     assert handle["rows"] == 6 and handle["columns"] == [
-        "s",
-        "p",
-        "o",
-        "o_kind",
-        "o_lang",
-        "o_datatype",
-        "binding",
+        *("c", "c_kind", "c_lang", "c_datatype"),
+        *("g", "g_kind", "g_lang", "g_datatype"),
     ]
     assert handle["grade"] == "bundle" and handle["complete"] is True
     receipt, _ = run("receipt", "affects3", workspace=ws)
     assert receipt["inputs"][str(values)]["kind"] == "external"
     assert receipt["plan"]["steps"][-1]["op"] == "bindings"
+    assert receipt["shape"] == "bindings" and receipt["pattern"] == {
+        "s": "?c",
+        "p": "<http://example.org/affects>",
+        "o": "?g",
+    }
     assert receipt["totals"]["requests"] >= 1 and all(r["request_id"] for r in receipt["requests"])
 
 
@@ -105,7 +105,7 @@ def test_fetch_max_rows_is_an_approximation_only_when_rows_remained(ws):
     assert handle["rows"] == 5 and handle["complete"] is False
     assert "--max-rows 5" in handle["approximations"][0]
     receipt, _ = run("receipt", "few", workspace=ws)
-    assert receipt["schema"] == "kgfq.receipt/3"
+    assert receipt["schema"] == "kgfq.receipt/4"
     assert receipt["completeness"]["incomplete_because"] == ["max_rows"]
     handle, _ = run(
         "fetch", "chemkg", "?c ex:affects ?g", "--max-rows", "24", "--out", "all", workspace=ws
@@ -142,7 +142,9 @@ def test_fetch_to_csv_path_with_receipt_beside_it(ws, tmp_path):
     out = tmp_path / "exports" / "labels.csv"
     handle, _ = run("fetch", "chemkg", "? rdfs:label ?", "--out", str(out), workspace=ws)
     assert out.exists() and out.with_name("labels.receipt.json").exists()
-    assert out.read_text().splitlines()[0] == "s,p,o,o_kind,o_lang,o_datatype"
+    assert (
+        out.read_text().splitlines()[0] == "s,s_kind,s_lang,s_datatype,o,o_kind,o_lang,o_datatype"
+    )
     handle, _ = run(
         "fetch", "chemkg", "? rdfs:label ?", "--out", "few", "--max-rows", "5", workspace=ws
     )
@@ -264,23 +266,46 @@ def test_an_anonymous_position_does_not_join_a_variable_named_like_it(ws, tmp_pa
     assert sum(r["count"] for r in payload["rows"]) == 4
 
 
-def test_count_and_fetch_keep_an_anonymous_position_apart_too(ws, tmp_path):
+def test_count_and_sample_keep_an_anonymous_position_apart_too(ws, tmp_path):
     # `?o ex:affects ?`: the subject is called `o` and the object has no name.
-    # The body spelled the object `?o` as well, so a bound count and a bound
-    # fetch asked for chemicals that affect themselves; and a plain fetch keyed
-    # both positions `o`, so each row's subject came back as its object.
+    # The body spelled the object `?o` as well, so a bound count asked for
+    # chemicals that affect themselves; and rows were keyed `o` for both
+    # positions, so a subject came back as its object.
     values = tmp_path / "chems.tsv"
     values.write_text("?o\n<http://example.org/chem/1>\n<http://example.org/chem/2>\n")
     payload, _ = run("count", "chemkg", "?o ex:affects ?", "--values", str(values), workspace=ws)
     assert [c["count"] for c in payload["counts"]] == [2, 2]
-    chems = {"http://example.org/chem/1", "http://example.org/chem/2"}
-    for name, extra, rows in (("bound", ["--values", str(values)], 4), ("whole", [], 24)):
-        handle, _ = run("fetch", "chemkg", "?o ex:affects ?", *extra, "--out", name, workspace=ws)
-        assert handle["rows"] == rows
-        table = pq.read_table(ws / "tables" / f"{name}.parquet")
-        subjects, objects = set(table["s"].to_pylist()), set(table["o"].to_pylist())
-        assert all("/chem/" in s for s in subjects) and all("/gene/" in o for o in objects)
-        assert name == "whole" or subjects == chems
+    payload, _ = run("sample", "chemkg", "?o ex:affects ?", "-n", "5", workspace=ws)
+    assert payload["vars"] == ["o", "_kgfq_o"]
+    assert all("/chem/" in r["o"] and "/gene/" in r["_kgfq_o"] for r in payload["rows"])
+
+
+def test_a_fetched_tables_columns_are_the_patterns_variables(ws, tmp_path):
+    # A constant has no column: it is in the receipt's pattern. An anonymous
+    # position's column is the position's own name.
+    handle, _ = run("fetch", "chemkg", "?chem ex:affects ?", "--out", "named", workspace=ws)
+    assert handle["rows"] == 24 and handle["columns"] == [
+        *("chem", "chem_kind", "chem_lang", "chem_datatype"),
+        *("o", "o_kind", "o_lang", "o_datatype"),
+    ]
+    table = pq.read_table(ws / "tables" / "named.parquet")
+    assert set(table["chem_kind"].to_pylist()) == {"iri"} == set(table["o_kind"].to_pylist())
+    assert all("/chem/" in c for c in table["chem"].to_pylist())
+    receipt, _ = run("receipt", "named", workspace=ws)
+    assert receipt["pattern"] == {"s": "?chem", "p": "<http://example.org/affects>", "o": "?o"}
+    # Every column needs a name of its own, and it is the caller's to choose.
+    for pattern, said in (
+        ("?o ex:affects ?", "leaves its object unnamed, and that column would be `o`"),
+        ("ex:chem/1 ex:affects ex:gene/G1", "has no variable"),
+        ("?c ex:affects ?c_kind", "would both need the column `c_kind`"),
+    ):
+        for command in ("explain", "fetch"):
+            _, err = run(command, "chemkg", pattern, workspace=ws, expect=2)
+            assert said in err, err
+    _, err = run("fetch", "chemkg", "?o ex:affects ?", workspace=ws, expect=2)
+    assert err.rstrip().endswith("e.g. `?o <http://example.org/affects> ?object`.")
+    log, _ = run("log", workspace=ws)
+    assert [r["command"] for r in log["steps"]] == ["fetch"]
 
 
 def test_count_fetch_and_sample_refuse_an_equality_get_cannot_carry(ws):

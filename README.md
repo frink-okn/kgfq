@@ -26,6 +26,7 @@ uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
 uv run kgfq distinct scales '? fbi:OffenseUCRCode ?code' --by o   # distinct values with counts; reads no triples
 uv run kgfq fetch phaseskg '? rdfs:label ?' --out labels   # tables/labels.parquet + receipt
 uv run kgfq receipt labels
+uv run kgfq export labels --out labels.nt                # the table's triples, as N-Triples
 uv run kgfq log
 uv run kgfq lint query.rq                              # KGFQ001–KGFQ012; never rewrites
 uv run kgfq sparql query.rq --dataset prokn --out hits   # lint, then kgf-sparql to completion, or a budget
@@ -40,6 +41,11 @@ variable it names must appear by name in the pattern: a `?paper` column binds
 nothing, so every row would count or fetch the whole pattern. `count`, `explain`,
 `fetch` and `distinct` therefore refuse it with exit 2, naming both sides, before any
 request. A partial overlap is refused too (see the plan, C1).
+
+A fetched table's columns are the pattern's variables, four for each: `?zip` is `zip`,
+`zip_kind` (`iri`, `literal` or `bnode`), `zip_lang` and `zip_datatype`. A constant has
+no column, and an anonymous position's is `s`, `p` or `o`. The receipt keeps the
+pattern, so `kgfq export` can put every row back into it and write the triples.
 
 `kgfq distinct` lists the distinct values one position of a pattern takes, each with
 its triples, through doc 03 §3.4.13's `/distinct`. The server walks its indexes, so the

@@ -1,8 +1,8 @@
 # The session format — a proposal
 
-Proposed 2026-11-20 for issue #3 (parity and compatibility with `../kgf-explorer`). Nothing
-here is built. It changes one decision of record, C6's "every fetched table is a set of
-triples" (§4.3); until this proposal is accepted, plan C6 and `CLAUDE.md` stand.
+Proposed 2026-11-20 for issue #3 (parity and compatibility with `../kgf-explorer`), accepted
+the same day, and landing in the order of §10; each part says when it landed. It changes one
+decision of record, C6's "every fetched table is a set of triples" (§4.3).
 
 ## 1. The problem
 
@@ -118,8 +118,10 @@ terms (a schema listing's classes are IRIs), is open (§11).
 
 ### 4.3 Fetch tables are bindings (changes kgfq C6)
 
-**Proposed:** a `fetch` table is stored as `bindings` with its pattern in the receipt, in both
-clients. Today kgfq stores `s, p, o, …`, and the explorer stores the pattern's variables.
+A `fetch` table is stored as `bindings` with its pattern in the receipt, in both clients.
+kgfq stored `s, p, o, …`; the explorer stores the pattern's variables. *Landed in kgfq
+2026-11-20* (`kgfq.plan.fetch.fetch_variables`, receipt `kgfq.receipt/4`; plan C6 records
+what was decided while building).
 
 For the pattern `?prov <https://schema.org/postalCode> ?zip`:
 
@@ -131,15 +133,25 @@ Two rules make it lossless:
 
 - **Every variable position has a column, anonymous ones included.** An anonymous position is
   named after itself (`s`, `p`, `o`), as the explorer's `position()` does now. A name already
-  taken by a pattern variable is a refusal, never a silent self-join: `as_body` names
+  taken by a pattern variable is a refusal, never a silent self-join: `as_body` named
   anonymous positions the same way and turned `?o <p> ?` under bindings for `?o` into one
-  (plan §6, 2026-11-07). Whether the explorer refuses that collision is unchecked (§11).
-- **A constant position has no column** and is kept in the pattern.
+  (plan §6, closed 2026-11-20). Whether the explorer refuses that collision is unchecked
+  (§11).
+- **A constant position has no column** and is kept in the pattern. So a pattern with no
+  variable has no table, and is refused: `count` answers it.
+- **Columns do not collide.** `?c` and `?c_kind` would both need `c_kind`; refused.
+- **A repeated variable is one column**, and the equality is the server's to apply, which it
+  does only when the bindings bind the variable in every row. Without bindings it is
+  refused, since a GET sends no names (plan §6, 2026-11-20).
+- **Input tuples are distinct.** A bindings block joins like `VALUES`; a tuple sent twice
+  would answer twice, and no column tells the copies apart.
 
-`triples(table, pattern)`, about twenty lines in each client, puts each row's values back into
+`triples(table, receipt)`, about twenty lines in each client, puts each row's values back into
 the pattern and returns the triples. It is lossless for a one-pattern table, and both clients'
 copies are tested against the shared fixtures (§9). `cite` (C11) and RDF export
-(`kgfq export <table> --format nt`) use it.
+(`kgfq export <table> --format nt`) use it. *Landed in kgfq 2026-11-20*
+(`kgfq.workspace.triples`): an export of `? ? ?` from the fixture server parses to the graph
+the bundle was built from.
 
 Why bindings and not triples:
 
@@ -188,15 +200,41 @@ explorer's budget, engine versions and notes; a `sparql` receipt's lint and norm
 record and its pointer to the engine receipt. A reader that does not know the operation keeps
 the detail verbatim.
 
-**The content hash is specified here, not by either implementation.** Today only kgfq computes
-one (`Workspace.content_hash`): SHA-256 over the column names and the rows as compact JSON,
-sorted. Two parts of that do not port to JavaScript as written. Python sorts strings by code
-point and JavaScript by UTF-16 unit, which differ above U+FFFF; and JSON escaping and number
-formatting differ between `json.dumps` and `JSON.stringify` (lone surrogates, `1.0` against
-`1`). The format fixes the serialization (every cell as a string or null, rows sorted by their
-UTF-8 bytes) and the fixtures carry hashes both clients must reproduce. A derived table with
-native numeric columns needs one spelling per number; the explorer returns numbers as typed
-literals, which is one answer (§11).
+**The content hash is specified here, not by either implementation.** *Landed 2026-11-20*
+(`kgfq.workspace.store.TableHash`, vectors in `tests/test_workspace.py`). A row is its cells
+in column order, each self-delimiting:
+
+| cell | bytes |
+|---|---|
+| null | `N` |
+| string | `S`, the UTF-8 length in decimal, `:`, the UTF-8 bytes |
+| integer | `I`, its decimal digits, `;` |
+| boolean | `B1` or `B0` |
+| bytes | `X`, the length in decimal, `:`, the bytes |
+
+The rows' SHA-256 digests are added as 256-bit big-endian integers, modulo 2^256. The hash is
+`sha256:` and the hex of SHA-256 over, in order: the preamble `kgf.table-hash/1` and a
+newline; the column names as one row of strings; `R`, the row count in decimal, `;`; and the
+sum as 32 bytes.
+
+Why this shape:
+
+- **It is taken a row at a time, in any order, in constant memory.** A sum does not care
+  about order, so nothing is sorted and nothing is held: a fetch can hash its pages as they
+  arrive, and a table larger than memory can be hashed. Whole-predicate fetches of 41 M
+  triples have been seen holding 9 GB; a hash that needs every row at once would stand in
+  the way of streaming them to disk. A repeated row counts each time, since a table is a
+  bag of rows.
+- **Nothing depends on a language.** The first version was compact JSON per row, sorted as
+  strings: Python sorts strings by code point and JavaScript by UTF-16 unit, which differ
+  above U+FFFF, and `json.dumps` and `JSON.stringify` would have had to agree on every escape
+  and every number. Lengths need no escaping, and an integer sum is the same everywhere.
+- **A column's type is part of the table**: the integer 1 and the string `1` hash apart. A
+  float has no spelling two languages share and is refused until one is chosen (§11); the
+  explorer returns numbers as typed literals, which is one answer.
+- **It finds any difference that happens; it is not proof against a table built to
+  collide.** A sum of digests can be attacked where a single digest cannot. It need not
+  resist that: whoever can rewrite a table's rows can rewrite the receipt in its footer.
 
 ## 6. The operation registry
 

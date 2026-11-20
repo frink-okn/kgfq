@@ -15,6 +15,9 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
+import pyarrow as pa
+
+from ..client.terms import term_column_names
 from .store import Workspace
 
 LOG_SCHEMA = "kgfq.log/1"
@@ -22,8 +25,10 @@ GRADES = ("bundle", "sparql", "external", "asserted")
 
 
 def classify_values(ws: Workspace, values: Iterable[str]) -> dict[str, dict[str, Any]]:
-    """For each value, the earliest workspace table (and its step) whose ``s``
-    or ``o`` column carries it, else ``asserted``."""
+    """For each value, the earliest workspace table (and its step) with a term
+    column that carries it, else ``asserted``. Every term column is read: a
+    fetched table's are its pattern's variables (C6, 2026-11-20), whatever the
+    caller called them."""
     wanted = {v for v in values if v}
     out: dict[str, dict[str, Any]] = {v: {"kind": "asserted"} for v in wanted}
     if not wanted:
@@ -36,7 +41,11 @@ def classify_values(ws: Workspace, values: Iterable[str]) -> dict[str, dict[str,
             table = ws.read_table(name)
         except Exception:
             continue
-        cols = [c for c in ("s", "o") if c in table.column_names]
+        cols = [
+            c
+            for c in term_column_names(table.column_names)
+            if pa.types.is_string(table.schema.field(c).type)
+        ]
         if not cols:
             continue
         receipt = ws.read_receipt(name)
