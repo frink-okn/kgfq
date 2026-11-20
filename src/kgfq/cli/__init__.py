@@ -47,9 +47,9 @@ from ..sparql import (
     run_engine,
     sparql_receipt,
 )
-from ..workspace.bind import bind_rows, parse_bind
+from ..workspace.bind import bind_rows, parse_bind, tuples_in, unmatched_report
 from ..workspace.log import Step
-from ..workspace.receipts import fetch_receipt, request_receipt
+from ..workspace.receipts import completeness, fetch_receipt, request_receipt
 from ..workspace.store import Workspace, WorkspaceError, stamped, write_parquet
 from ..workspace.triples import triples, write_ntriples
 
@@ -308,6 +308,7 @@ class Cli:
         step.pin(_pin(ep, rel))
         step.input_values(_bound_values(pattern))
         self.bound_from(step, bind)
+        report: dict[str, Any] | None = None
         with ep.trace() as t:
             stats = self.stats(ep, rel)
             if rows is None:
@@ -331,13 +332,30 @@ class Cli:
                     ],
                     "total": sum(c.value for c in counts),
                 }
+                report = unmatched_report(
+                    vars_ or [],
+                    rows,
+                    {
+                        tuple(format_term(v) for v in r)
+                        for r, c in zip(rows, counts, strict=True)
+                        if c.value
+                    },
+                    complete=True,
+                    bind=bind,
+                    values=a.values,
+                )
+                payload["bound"] = report
                 table = [
                     [i, " ".join(format_term(v) for v in r), c.value]
                     for i, (r, c) in enumerate(zip(rows, counts, strict=True))
                 ]
                 header = ["binding", "row", "count"]
-        step.receipt(request_receipt(step=step.step, kind="count", release=rel, records=t.records))
-        step.result(**payload if rows is None else {"total": payload["total"]})
+        step.receipt(
+            request_receipt(
+                step=step.step, kind="count", release=rel, records=t.records, bindings=report
+            )
+        )
+        step.result(**payload if rows is None else {"total": payload["total"], "bound": report})
         step.finish()
         self.emit(payload, table=table, header=header)
         return 0
@@ -462,6 +480,16 @@ class Cli:
                 approximations.append(
                     f"stopped at --max-rows {a.max_rows}: which rows, not how many, is unspecified (R3)"
                 )
+            report = None
+            if rows is not None:
+                report = unmatched_report(
+                    vars_ or [],
+                    rows,
+                    tuples_in(table, vars_ or []),
+                    complete=completeness(t.records)["complete"],
+                    bind=bind,
+                    values=a.values,
+                )
             receipt = fetch_receipt(
                 step=step.step,
                 kind="fetch",
@@ -472,6 +500,7 @@ class Cli:
                 pattern=pattern.as_body(),
                 approximations=approximations,
                 inputs=inputs,
+                bindings=report,
             )
         info = write_output(self.workspace, out, table, receipt)
         core = info["receipt"]["core"]
@@ -491,6 +520,10 @@ class Cli:
             "step": step.step,
             "content_hash": info["content_hash"],
         }
+        if report is not None:
+            # where a silent loss becomes a finding: say it where it changes
+            # what is done next, not only in the receipt (C6)
+            handle["bound"] = report
         self.emit(handle, table=[[k, v] for k, v in handle.items()], header=["field", "value"])
         return 0
 

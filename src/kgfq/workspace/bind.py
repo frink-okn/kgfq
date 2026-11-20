@@ -11,8 +11,10 @@ what is sent is what was fetched.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
+
+import pyarrow as pa
 
 from ..client.terms import (
     BadTermSyntax,
@@ -93,3 +95,55 @@ def bind_rows(ws: Workspace, bind: Mapping[str, Any]) -> tuple[list[str], list[l
         else:
             seen.setdefault(tuple(format_term(t) for t in row), row)
     return list(columns), list(seen.values())
+
+
+SAMPLE = 8
+
+
+def unmatched_report(
+    vars_: Sequence[str],
+    rows: Sequence[Sequence[Term]],
+    matched: set[tuple[str, ...]],
+    *,
+    complete: bool,
+    bind: Mapping[str, Any] | None = None,
+    values: str | None = None,
+) -> dict[str, Any]:
+    """How many of the input tuples found something, and a sample of those that
+    found nothing (plan C6, 2026-09-24; ``../kgf-explorer`` D8). It is the
+    number to read before trusting the next join: a value that matched nothing
+    may be absent, or may be spelled another way than the graph spells it, and
+    only a look at the sample tells which.
+
+    ``matched`` holds the input tuples, in request syntax, that some row or
+    count answered. Over the distinct tuples, since one given twice is sent
+    once. A read that stopped early cannot say what the rest would have
+    matched, so it reports what it saw and leaves ``unmatched`` null."""
+    sent: dict[tuple[str, ...], None] = {}
+    for r in rows:
+        sent.setdefault(tuple(format_term(t) for t in r))
+    missing = [t for t in sent if t not in matched]
+    report: dict[str, Any] = {"vars": list(vars_), "sent": len(sent)}
+    if bind:
+        report.update(table=bind["table"], columns=dict(bind["columns"]))
+    if values:
+        report["values"] = values
+    report["matched"] = len(sent) - len(missing)
+    report["unmatched"] = len(missing) if complete else None
+    report["unmatched_sample"] = [list(t) for t in missing[:SAMPLE]] if complete else []
+    return report
+
+
+def tuples_in(table: pa.Table, vars_: Sequence[str]) -> set[tuple[str, ...]]:
+    """The distinct tuples a fetched table holds for these variables, in request
+    syntax, read from their four columns each."""
+    columns = [[table.column(c).to_pylist() for c in variable_columns(v)] for v in vars_]
+    out: set[tuple[str, ...]] = set()
+    for i in range(table.num_rows):
+        out.add(
+            tuple(
+                format_term(term_from_columns(value[i], kind[i], lang[i], datatype[i]))
+                for value, kind, lang, datatype in columns
+            )
+        )
+    return out

@@ -763,6 +763,18 @@ report caught. Schema `kgfq.receipt/3`. The handle `fetch` prints and returns (Â
 carries `unmatched` and the sample, not only the sidecar: that is where it changes what
 an agent does next. Waits for the paged-completeness fix to `fetch_receipt` to land.
 
+*Landed 2026-11-20 â€” the unmatched report* (`kgfq.workspace.bind.unmatched_report`,
+`tests/test_bind.py`), as planned above but read off the bound variables' own columns, the
+`binding` column being gone. A bound `fetch` or `count`, from `--bind` or `--values`, puts in
+its receipt's core a `bindings` block: the variables, what they were bound from, and over
+the distinct input tuples `sent`, `matched`, `unmatched` and the first eight unmatched in
+request syntax. The fetch handle and the count's result carry it as `bound`, where it
+changes what is done next. A read that stopped early cannot say what the rest would have
+matched: it reports what it saw and leaves `unmatched` null. On the fixture, the seven genes
+of genekg bound as the objects of chemkg's `affects` report five matched and `G6`, `G7`
+unmatched; a count over the same bindings reports the same without reading a triple, which
+is the semijoin `../kgf-explorer`'s bound `count` is used for.
+
 ### C7. Resolve and labels
 
 Fan-out `/search` across the chosen datasets, merged by `match_kind` class and rank,

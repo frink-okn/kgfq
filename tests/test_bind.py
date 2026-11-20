@@ -219,3 +219,60 @@ def test_bind_refusals_reach_the_caller_before_any_request(ws, tmp_path):
             assert said in err, err
     log, _ = run("log", workspace=ws)
     assert len(log["steps"]) == 1
+
+
+def test_a_bound_step_says_which_values_found_nothing(ws, tmp_path):
+    """genekg holds seven genes and chemkg affects five of them. Binding all
+    seven finds rows for five, and the receipt, the record and the handle say
+    so, with the two that found nothing in request syntax. A table of the
+    matches alone would not show the loss."""
+    run("fetch", "genekg", "?gene rdf:type ex:Gene", "--out", "genes", workspace=ws)
+    handle, _ = run(
+        *("fetch", "chemkg", "?chem ex:affects ?gene"),
+        *("--bind", "genes:gene", "--out", "affected"),
+        workspace=ws,
+    )
+    lost = [[f"<{EX}gene/G6>"], [f"<{EX}gene/G7>"]]
+    report = {
+        "vars": ["gene"],
+        "sent": 7,
+        "table": "genes",
+        "columns": {"gene": "gene"},
+        "matched": 5,
+        "unmatched": 2,
+        "unmatched_sample": lost,
+    }
+    assert handle["bound"] == report and handle["complete"] is True
+    receipt, _ = run("receipt", "affected", workspace=ws)
+    assert receipt["core"]["bindings"] == report
+    counted, _ = run("count", "chemkg", "? ex:affects ?gene", "--bind", "genes:gene", workspace=ws)
+    assert counted["bound"] == report and counted["total"] == handle["rows"]
+    log, _ = run("log", workspace=ws)
+    assert log["steps"][1]["receipt"]["core"]["bindings"] == report
+    assert log["steps"][2]["receipt"]["core"]["bindings"] == report
+    assert log["steps"][2]["result"] == {"total": handle["rows"], "bound": report}
+
+    # a file gives the same report, naming the file; a tuple given twice is one
+    values = tmp_path / "chems.tsv"
+    values.write_text("?chem\n" + "".join(f"<{EX}chem/{i}>\n" for i in (1, 99, 1)))
+    handle, _ = run(
+        "fetch", "chemkg", "?chem ex:affects ?", "--values", str(values), "--out", "f", workspace=ws
+    )
+    assert handle["bound"] == {
+        "vars": ["chem"],
+        "sent": 2,
+        "values": str(values),
+        "matched": 1,
+        "unmatched": 1,
+        "unmatched_sample": [[f"<{EX}chem/99>"]],
+    }
+
+    # a read that stopped early cannot say what the rest would have matched
+    handle, _ = run(
+        *("fetch", "chemkg", "?chem ex:affects ?gene", "--bind", "genes:gene"),
+        *("--max-rows", "3", "--out", "few"),
+        workspace=ws,
+    )
+    assert handle["complete"] is False
+    assert handle["bound"]["sent"] == 7 and 1 <= handle["bound"]["matched"] <= 3
+    assert handle["bound"]["unmatched"] is None and handle["bound"]["unmatched_sample"] == []
