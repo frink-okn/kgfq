@@ -20,7 +20,7 @@ from typing import Any
 
 import pyarrow as pa
 
-from .. import __version__
+from .. import __version__, ops
 from ..client.endpoint import Endpoint, Pattern, Release
 from ..client.errors import KgfError, KgfqError, TransportError
 from ..client.session import Session
@@ -84,6 +84,7 @@ class Cli:
         self.json = bool(args.json) or not (hasattr(self.out, "isatty") and self.out.isatty())
         self.workspace = Workspace(args.workspace)
         self.session = Session(self.workspace, skin="kgfq", origins_override=args.endpoint or None)
+        self.ctx = ops.Context(self.workspace, self.session, surface="cli", version=args.version)
 
     # -- output ---------------------------------------------------------------
 
@@ -382,6 +383,21 @@ class Cli:
             payload,
             table=[[format_term(r[n]) if n in r else "" for n in names] for r in rows],
             header=names,
+        )
+        return 0
+
+    def search(self) -> int:
+        """``kgfq search``: the hits, and the table they are filed as."""
+        a = self.args
+        handle = ops.search(self.ctx, a.dataset, a.text, limit=a.limit, out=a.out)
+        self.emit(
+            handle,
+            table=[
+                [h["label"] or "", h["subject"], h["matched"] or "", h["match_kind"] or ""]
+                for h in handle["hits"]
+            ]
+            + [["", f"→ {handle['rows']} hit(s), filed as table {handle['table']}", "", ""]],
+            header=["label", "subject", "matched", "kind"],
         )
         return 0
 
@@ -1119,6 +1135,12 @@ def build_parser() -> argparse.ArgumentParser:
     fc.add_argument(
         "--top", type=int, help="print only the N largest values (all values are still read)"
     )
+
+    se = sub.add_parser("search", help="find things by name: full-text search over one graph")
+    se.add_argument("dataset")
+    se.add_argument("text", help="words to find")
+    se.add_argument("--limit", type=int, default=ops.SEARCH_LIMIT, help="most hits to keep")
+    se.add_argument("--out", help="table name (default: search_<the words>)")
 
     sm = sub.add_parser("sample", help="a seeded sample of a pattern")
     sm.add_argument("dataset")

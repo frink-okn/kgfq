@@ -21,6 +21,7 @@ uv sync
 uv run kgfq endpoints add https://apps.okn.us/kgf   # a KGF origin; repeatable
 uv run kgfq list_graphs                               # every graph on every endpoint
 uv run kgfq graph_summary ubergraph                   # the summary card
+uv run kgfq search ubergraph 'diabetes mellitus'       # a name to its IRIs; the hits are a table
 uv run kgfq count ubergraph '? rdfs:subClassOf ?'      # from the cached inventory, no request
 uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
 uv run kgfq distinct scales '? fbi:OffenseUCRCode ?code' --by o   # distinct values with counts; reads no triples
@@ -51,6 +52,11 @@ A fetched table's columns are the pattern's variables, four for each: `?zip` is 
 `zip_kind` (`iri`, `literal` or `bnode`), `zip_lang` and `zip_datatype`. A constant has
 no column, and an anonymous position's is `s`, `p` or `o`. The receipt keeps the
 pattern, so `kgfq export` can put every row back into it and write the triples.
+
+`kgfq search` is how a name becomes an IRI: full-text search over one graph's literals,
+labels first. Its hits are a table like any other, so the next step binds from it
+(`--bind search_atrazine:subject`) and an IRI taken from it is recorded as derived from
+that step, where one typed from memory is recorded as asserted.
 
 `fetch` counts a pattern before reading it, and refuses one over 1,000,000 rows before any
 row is read, saying how large it is, about how long it would take, and what would make it

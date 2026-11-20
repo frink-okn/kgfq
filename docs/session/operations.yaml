@@ -101,7 +101,9 @@ operations:
         graph: {type: string}
         text: {type: string}
         limit: *limit
-    implemented_by: {kgf-explorer: search}
+        out: {type: string, description: "kgfq: the table's name."}
+    table: bindings
+    implemented_by: {kgf-explorer: search, kgfq: search}
 
   count:
     meaning: >-

@@ -357,7 +357,7 @@ and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the 
 | `endpoints` | a page setting, not a step | `endpoints` | kgfq only, by design (D14) |
 | `graph_summary` | `graph_summary` | `graph_summary` (was `summary`) | have |
 | `schema` | graph, class, class+predicate | plus datatype, projection, view | have; args to reconcile |
-| `search` | one graph's `/search` | — (C7 `resolve` planned) | **kgfq needs** |
+| `search` | one graph's `/search` | `search` (2026-11-20); the fan-out `resolve` (C7) is still planned | have |
 | `count` | many graphs, bind from a table | one graph, `--values`, `--bind` (2026-11-20) | **kgfq needs** many graphs |
 | `sample` | — | `sample` | kgfq only for now |
 | `distinct` | — | `distinct` (kgf-rs unit 38, not on `apps.okn.us`) | kgfq only for now |
