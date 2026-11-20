@@ -20,7 +20,7 @@ import math
 import os
 import re
 import time
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 RECEIPT_KEY = b"kgfq.receipt"
+# The first bytes hashed, so a hash names the encoding it was made with.
+HASH_PREAMBLE = b"kgf.table-hash/1\n"
 TABLE_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}")
 
 
@@ -224,25 +226,14 @@ class Workspace:
 
     @staticmethod
     def content_hash(table: pa.Table) -> str:
-        """A deterministic hash of the rows regardless of their order: the
-        canonical (sorted) row serialization, so replay (C10) compares equal
-        results that arrived in a different order."""
-        columns = table.column_names
-        rows = (
-            [
-                json.dumps([_plain(v) for v in row], separators=(",", ":"), ensure_ascii=False)
-                for row in zip(*(table.column(c).to_pylist() for c in columns), strict=True)
-            ]
-            if table.num_rows
-            else []
-        )
-        rows.sort()
-        h = hashlib.sha256()
-        h.update(json.dumps(columns, separators=(",", ":")).encode())
-        for r in rows:
-            h.update(b"\n")
-            h.update(r.encode())
-        return "sha256:" + h.hexdigest()
+        """The table's rows as a hash another client can reproduce, whatever
+        order they arrived in, so replay (C10) and a second client compare equal
+        results (:class:`TableHash`; ``notes/session-format.md`` §5). Read a
+        batch at a time: the table is never held as rows."""
+        hasher = TableHash(table.column_names)
+        for batch in table.to_batches():
+            hasher.update(zip(*(column.to_pylist() for column in batch.columns), strict=True))
+        return hasher.hexdigest()
 
     # -- the log ------------------------------------------------------------
 
@@ -268,12 +259,74 @@ class Workspace:
         return record
 
 
-def _plain(v: Any) -> Any:
+class TableHash:
+    """A table's content hash, taken a row at a time in any order and in
+    constant memory, so a fetch can hash its pages as they arrive and a table
+    larger than memory can still be hashed.
+
+    Each row is its cells in column order, each self-delimiting:
+
+    - null: ``N``
+    - string: ``S``, the UTF-8 length in decimal, ``:``, the UTF-8 bytes
+    - integer: ``I``, its decimal digits, ``;``
+    - boolean: ``B1`` or ``B0``
+    - bytes: ``X``, the length in decimal, ``:``, the bytes
+
+    The rows' SHA-256 digests are added as 256-bit big-endian integers, modulo
+    2**256. The hash is SHA-256 over :data:`HASH_PREAMBLE`, the column names as
+    one row of strings, ``R`` with the row count in decimal and ``;``, and that
+    sum as 32 bytes: ``sha256:`` and the hex.
+
+    A sum does not care about order, counts a repeated row each time, and needs
+    no sort: the first version sorted every row, which holds the whole table.
+    Lengths and a fixed cell count per row need no escaping, which is where
+    ``json.dumps`` and ``JSON.stringify`` would have had to agree. A float has
+    no spelling two languages share yet and is refused (NaN is null).
+
+    It finds any difference that happens. It is not proof against a table built
+    to collide, and need not be: whoever can rewrite a table's rows can rewrite
+    the receipt in its footer."""
+
+    def __init__(self, columns: Sequence[str]) -> None:
+        self._header = b"".join(map(_cell_bytes, columns))
+        self._sum = 0
+        self.rows = 0
+
+    def update(self, rows: Iterable[Sequence[Any]]) -> None:
+        for row in rows:
+            digest = hashlib.sha256(b"".join(map(_cell_bytes, row))).digest()
+            self._sum = (self._sum + int.from_bytes(digest, "big")) & _MASK_256
+            self.rows += 1
+
+    def hexdigest(self) -> str:
+        h = hashlib.sha256()
+        h.update(HASH_PREAMBLE)
+        h.update(self._header)
+        h.update(b"R%d;" % self.rows)
+        h.update(self._sum.to_bytes(32, "big"))
+        return "sha256:" + h.hexdigest()
+
+
+_MASK_256 = (1 << 256) - 1
+
+
+def _cell_bytes(v: Any) -> bytes:
+    """One cell of a :class:`TableHash` row."""
+    if v is None or (isinstance(v, float) and math.isnan(v)):
+        return b"N"
+    if isinstance(v, str):
+        encoded = v.encode()
+        return b"S%d:" % len(encoded) + encoded
+    if isinstance(v, bool):
+        return b"B1" if v else b"B0"
+    if isinstance(v, int):
+        return b"I%d;" % v
     if isinstance(v, (bytes, bytearray)):
-        return v.hex()
-    if isinstance(v, float) and math.isnan(v):
-        return None
-    return v
+        return b"X%d:" % len(v) + bytes(v)
+    raise WorkspaceError(
+        f"a {type(v).__name__} cell has no specified hash encoding: {v!r} "
+        "(notes/session-format.md §5 covers null, string, integer, boolean and bytes)"
+    )
 
 
 def _now() -> str:

@@ -660,6 +660,19 @@ at a page boundary, mid the last page and after an earlier chunk, incomplete; st
 the last row, complete. The widened set is tested over records: `kgf serve` takes no
 budget, and the fixtures fit its 64 MB and 2 s.
 
+*Changed 2026-11-20 — the content hash is specified.* It was SHA-256 over each row as
+compact JSON, the rows sorted as Python strings: defined by this implementation, and not
+reproducible in JavaScript, which orders strings by UTF-16 unit and spells JSON escapes and
+numbers its own way. A second client has to compute the same hash for replay to compare
+across clients (`notes/session-format.md` §5). It is now each row as length-prefixed cells,
+the rows' SHA-256 digests added modulo 2^256, and one SHA-256 over a preamble naming the
+encoding, the column names, the row count and the sum (`TableHash`). A sum needs no sort, so
+the hash is taken a row at a time in constant memory, which the sorted form could not be: a
+fetch that streams its pages to disk can hash them as they pass. It finds any difference
+that happens and does not resist a table built to collide, which whoever can rewrite the
+rows could do to the receipt anyway. Floats are refused until they have a spelling. Tables
+written before this hash differently.
+
 *Planned 2026-09-24 — the unmatched report.* A bound fetch (`fetch --values`,
 `fetch(ds, pattern, bindings)`, `hydrate`) records in its receipt a `bindings` block:
 `sent`, `matched`, `unmatched`, and `unmatched_sample` (the first eight, in request

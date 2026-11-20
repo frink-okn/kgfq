@@ -188,15 +188,41 @@ explorer's budget, engine versions and notes; a `sparql` receipt's lint and norm
 record and its pointer to the engine receipt. A reader that does not know the operation keeps
 the detail verbatim.
 
-**The content hash is specified here, not by either implementation.** Today only kgfq computes
-one (`Workspace.content_hash`): SHA-256 over the column names and the rows as compact JSON,
-sorted. Two parts of that do not port to JavaScript as written. Python sorts strings by code
-point and JavaScript by UTF-16 unit, which differ above U+FFFF; and JSON escaping and number
-formatting differ between `json.dumps` and `JSON.stringify` (lone surrogates, `1.0` against
-`1`). The format fixes the serialization (every cell as a string or null, rows sorted by their
-UTF-8 bytes) and the fixtures carry hashes both clients must reproduce. A derived table with
-native numeric columns needs one spelling per number; the explorer returns numbers as typed
-literals, which is one answer (§11).
+**The content hash is specified here, not by either implementation.** *Landed 2026-11-20*
+(`kgfq.workspace.store.TableHash`, vectors in `tests/test_workspace.py`). A row is its cells
+in column order, each self-delimiting:
+
+| cell | bytes |
+|---|---|
+| null | `N` |
+| string | `S`, the UTF-8 length in decimal, `:`, the UTF-8 bytes |
+| integer | `I`, its decimal digits, `;` |
+| boolean | `B1` or `B0` |
+| bytes | `X`, the length in decimal, `:`, the bytes |
+
+The rows' SHA-256 digests are added as 256-bit big-endian integers, modulo 2^256. The hash is
+`sha256:` and the hex of SHA-256 over, in order: the preamble `kgf.table-hash/1` and a
+newline; the column names as one row of strings; `R`, the row count in decimal, `;`; and the
+sum as 32 bytes.
+
+Why this shape:
+
+- **It is taken a row at a time, in any order, in constant memory.** A sum does not care
+  about order, so nothing is sorted and nothing is held: a fetch can hash its pages as they
+  arrive, and a table larger than memory can be hashed. Whole-predicate fetches of 41 M
+  triples have been seen holding 9 GB; a hash that needs every row at once would stand in
+  the way of streaming them to disk. A repeated row counts each time, since a table is a
+  bag of rows.
+- **Nothing depends on a language.** The first version was compact JSON per row, sorted as
+  strings: Python sorts strings by code point and JavaScript by UTF-16 unit, which differ
+  above U+FFFF, and `json.dumps` and `JSON.stringify` would have had to agree on every escape
+  and every number. Lengths need no escaping, and an integer sum is the same everywhere.
+- **A column's type is part of the table**: the integer 1 and the string `1` hash apart. A
+  float has no spelling two languages share and is refused until one is chosen (§11); the
+  explorer returns numbers as typed literals, which is one answer.
+- **It finds any difference that happens; it is not proof against a table built to
+  collide.** A sum of digests can be attacked where a single digest cannot. It need not
+  resist that: whoever can rewrite a table's rows can rewrite the receipt in its footer.
 
 ## 6. The operation registry
 
