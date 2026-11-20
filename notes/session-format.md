@@ -244,17 +244,19 @@ Why this shape:
 
 ## 6. The operation registry
 
-`docs/session/operations.yaml`, one entry per operation:
+`docs/session/operations.yaml`, one entry per operation. *Landed 2026-11-20* with the 33
+operations the two clients have between them (`tests/test_session_format.py` checks its
+form, and that each name kgfq is said to have is a command it runs).
 
 ```yaml
 fetch:
   meaning: >-
-    Every triple matching one pattern in one graph, as a bindings table whose columns are the
-    pattern's variables. With bind, variables take the distinct values of an earlier table's
-    columns.
+    Every triple matching one pattern in one graph, as a table whose columns are the
+    pattern's variables. Under bindings, the rows the input tuples reach. A constant has
+    no column; the receipt's pattern keeps it.
   args:                     # JSON Schema
     type: object
-    required: [graph, subject, predicate, object]
+    required: [graph]
     properties:
       graph: {type: string}
       subject: {type: string}
@@ -262,23 +264,42 @@ fetch:
       object: {type: string}
       bind:
         type: object
+        required: [table, columns]
         properties:
           table: {type: string}
           columns: {type: object, additionalProperties: {type: string}}
-      max_rows: {type: integer}
-  output: bindings
-  implemented_by: [kgf-explorer, kgfq]
-  replayable_by: [kgfq]     # once C10 lands
+      values: {type: string}      # kgfq: a bindings file
+      max_rows: {type: integer}   # kgfq
+      out: {type: string}         # kgfq
+  table: bindings
+  implemented_by: {kgf-explorer: fetch, kgfq: fetch}
 ```
 
-`implemented_by` and `replayable_by` are what the parity table (§8) is generated from, so the
-table cannot drift from the registry. The registry holds meaning and arguments, not tool
-descriptions: those are each surface's own and are measured by its own runs (explorer D18).
+Decided while writing it:
 
-Arguments follow the explorer's forms where both clients have the operation, since its forms
-are the ones models were measured on: `bind: {table, columns}` rather than a `--values` file.
-kgfq's CLI keeps `--values <file>` as a convenience, logged as the import of the file
-followed by the bound step.
+- **The names are the explorer's** where it has the operation: `list_graphs`,
+  `graph_summary`. Its names are the ones models were measured on (its D18), its tool list is
+  signed into the gate's manifest, and `kgfq-mcp`'s tools will want the same names for the
+  same reason. `implemented_by` maps each client to the name the operation goes by there, so
+  `kgfq summary` is logged as `graph_summary` and the command keeps its name.
+- **`graph`, not `dataset`**, and a pattern as `subject`, `predicate`, `object`: each a term
+  in doc 03 §3.3 syntax with IRIs bracketed, `?name`, or left out for an unnamed position.
+  A client logs that spelling whatever its surface took; the explorer, which accepts a bare
+  `http…` IRI in a pattern, brackets it on the way to the log.
+- **`bind: {table, columns}`** is the explorer's form and the registry's. kgfq has only
+  `--values <file>` until it has `bind` (§10 step 4); the registry lists `values` as kgfq's,
+  and the record's `inputs` classify the file. `import` (C9) will make the file a table.
+- **Nothing is closed.** A client may log an argument the registry does not list, and a
+  reader keeps it.
+- **No `replayable_by` yet.** Replay is per operation and per client (§2), and no client
+  replays anything until C10; the field arrives with it.
+- **`table`** is stated only where the shape is settled. A listing's is open (§11).
+- **`answer` and `import` are not registered**: neither is designed. An entry needs its
+  arguments.
+
+`implemented_by` is the parity record. §8 is a snapshot of it with the reasons beside each
+row; where they differ, the registry is right. The registry holds meaning and arguments, not
+tool descriptions: those are each surface's own and are measured by its own runs.
 
 ## 7. Today's records, mapped
 
@@ -322,14 +343,14 @@ model SQL could write the same path. Import is reading a registered buffer and n
 
 ## 8. Parity
 
-Proposed registry names, with where each operation lives today. The "kgfq" column means the
-library and CLI; `kgfq-mcp` follows the library.
+Registry names, with where each operation lives today. The "kgfq" column means the library
+and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the record (§6).
 
 | operation | kgf-explorer | kgfq | for parity |
 |---|---|---|---|
-| `datasets` | `list_graphs` (one server) | `datasets` (every origin) | have |
+| `list_graphs` | `list_graphs` (one server) | `datasets` (every origin) | have |
 | `endpoints` | a page setting, not a step | `endpoints` | kgfq only, by design (D14) |
-| `summary` | `graph_summary` | `summary` | have |
+| `graph_summary` | `graph_summary` | `summary` | have |
 | `schema` | graph, class, class+predicate | plus datatype, projection, view | have; args to reconcile |
 | `search` | one graph's `/search` | — (C7 `resolve` planned) | **kgfq needs** |
 | `count` | many graphs, bind from a table | one graph, `--values` | **kgfq needs** many graphs and `bind` |

@@ -10,14 +10,17 @@ import jsonschema
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+import yaml
 
-from kgfq.cli import main
+from kgfq.cli import Cli, main
 from kgfq.workspace.log import classify_values
 from kgfq.workspace.store import RECEIPT_KEY, Workspace
 from kgfq.workspace.triples import triples
 
 SESSION = Path(__file__).parent.parent / "docs" / "session"
 RECEIPT = jsonschema.Draft202012Validator(json.loads((SESSION / "receipt.schema.json").read_text()))
+OPERATIONS = yaml.safe_load((SESSION / "operations.yaml").read_text())["operations"]
+CLIENTS = {"kgfq", "kgf-explorer"}
 P = "PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>\nPREFIX ex: <http://example.org/>\n"
 
 
@@ -177,3 +180,33 @@ def test_the_receipt_schema_closes_only_the_major_version():
         RECEIPT.validate(
             {**receipt, "core": {k: v for k, v in receipt["core"].items() if k != "grade"}}
         )
+
+
+def test_the_registry_is_well_formed():
+    """Each operation says what it means, takes arguments a JSON Schema describes,
+    and is implemented by at least one client under a name of that client's."""
+    doc = yaml.safe_load((SESSION / "operations.yaml").read_text())
+    assert doc["schema"] == "kgf.operations/1.0" and len(OPERATIONS) >= 30
+    for name, entry in OPERATIONS.items():
+        assert name.isidentifier() and name == name.lower(), name
+        assert len(entry["meaning"].split()) >= 4, name
+        jsonschema.Draft202012Validator.check_schema(entry["args"])
+        assert entry["args"]["type"] == "object", name
+        assert entry["args"].get("additionalProperties", True), f"{name}: nothing is closed"
+        assert entry["implemented_by"] and set(entry["implemented_by"]) <= CLIENTS, name
+        assert entry.get("table") in (None, "bindings", "triples"), name
+        for required in entry["args"].get("required", []):
+            assert required in entry["args"]["properties"], f"{name} requires {required}"
+
+
+def test_every_operation_kgfq_claims_is_a_command_it_has():
+    """The registry's ``implemented_by`` is the parity record (§8), so a name
+    kgfq is said to have must be a command its skin runs."""
+    claimed = {
+        e["implemented_by"]["kgfq"] for e in OPERATIONS.values() if "kgfq" in e["implemented_by"]
+    }
+    assert all(callable(getattr(Cli, name, None)) for name in claimed), claimed
+    assert claimed == {
+        *("datasets", "summary", "schema", "count"),
+        *("sample", "distinct", "fetch", "sparql"),
+    }
