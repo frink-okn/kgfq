@@ -36,7 +36,7 @@ from ..client.terms import (
     term_columns,
 )
 from ..lint import RULES, Diagnostic, ParseError, datasets_of, lint, parse_header
-from ..plan import execute_fetch, plan_fetch
+from ..plan import check_guard, execute_fetch, guard_rows, plan_fetch
 from ..sparql import (
     Budget,
     ResultError,
@@ -448,7 +448,9 @@ class Cli:
         ep, rel = self.resolve(a.dataset)
         pattern = self.pattern(ep, rel, a.pattern)
         vars_, rows, _ = self.bindings(ep, rel)
-        plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows, stats=self.stats(ep, rel))
+        plan = plan_fetch(
+            ep, rel, pattern, vars_=vars_, rows=rows, stats=self.stats(ep, rel), guard=guard_rows()
+        )
         self.emit(plan.as_dict())
         return 0
 
@@ -465,13 +467,23 @@ class Cli:
             bind=bind,
             values=a.values,
             max_rows=a.max_rows,
+            all=a.all or None,
             out=out,
         )
         step.pin(_pin(ep, rel))
         inputs = step.input_values(_bound_values(pattern))
         inputs.update(self.bound_from(step, bind))
         with ep.trace() as t:
-            plan = plan_fetch(ep, rel, pattern, vars_=vars_, rows=rows, stats=self.stats(ep, rel))
+            plan = plan_fetch(
+                ep,
+                rel,
+                pattern,
+                vars_=vars_,
+                rows=rows,
+                stats=self.stats(ep, rel),
+                guard=guard_rows(),
+            )
+            check_guard(plan, pattern, rel, max_rows=a.max_rows, allow_all=a.all)
             table = execute_fetch(
                 ep, rel, pattern, plan, vars_=vars_, rows=rows, max_rows=a.max_rows
             )
@@ -1089,6 +1101,11 @@ def build_parser() -> argparse.ArgumentParser:
         if name == "fetch":
             c.add_argument("--out", help="table name, or a .parquet/.csv/.json path")
             c.add_argument("--max-rows", type=int)
+            c.add_argument(
+                "--all",
+                action="store_true",
+                help="fetch a pattern larger than the guard (1,000,000 rows) whole",
+            )
 
     fc = sub.add_parser(
         "distinct", help="the distinct values of one position of a pattern, with counts"

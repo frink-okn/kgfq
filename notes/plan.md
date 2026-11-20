@@ -554,6 +554,35 @@ which D3 forbids. To settle before B: a small intent document (patterns, optiona
 patterns, filters, projection, budget) with a schema beside the plan's in `docs/`,
 with single-pattern `fetch` plus SQL composition as the phase-A subset.
 
+*Landed 2026-11-20 — the guard, for one pattern* (`kgfq.plan.fetch.check_guard`,
+`tests/test_guard.py`). A fetch that would read more than 1,000,000 rows is refused before
+a row is read, unless the caller bounds it (`--max-rows`) or asks for all of it (`--all`).
+Two things asked for it. A tool an agent calls has to be bounded, which `kgfq-mcp` (§7)
+needs before it has a `fetch`. And the cost of a mistake was unbounded: `fetch <ds> '? ? ?'`
+typed by accident starts a whole-graph read, and a whole-predicate fetch of 41 M triples
+runs for ten minutes and holds 9 GB. Decided while building:
+- It is the plan's (D3): `plan_fetch` records what the read would take and whether that is
+  over the guard, `explain` prints the verdict, and `check_guard` refuses. The skins pass
+  flags and decide nothing.
+- A scan reads the pattern's count, which R1 already has, so the guard costs a plain fetch
+  nothing. A bind-join reads at most that count, so a pattern under the guard needs no
+  second look. Over it, one bound `/count` sums what the input tuples reach, exactly, in
+  the requests the fetch itself would have made: two chemicals reaching 4 of a predicate's
+  24 triples are fetched, twelve reaching all 24 are not.
+- `--max-rows` bounds a plain scan and a bind-join. It does not bound R2's scan-and-filter
+  route, which reads the whole pattern to keep a few rows; that one needs `--all`.
+- The refusal says what was not spent, since its reader is as likely an agent as a person:
+  the rows, the requests, a time from the 45,000 to 90,000 rows a second large fetches have
+  run at, and what would make it smaller (`--bind`, `--max-rows`, `distinct`).
+- The limit is `KGFQ_FETCH_GUARD_ROWS` where it is set; `off` removes the guard. An
+  environment variable, not a workspace file: it is the deployment's to choose, as an MCP
+  server's configuration is.
+- A refusal writes no record, as kgfq's other refusals do not yet
+  (`notes/session-format.md` §11).
+
+On a local kgf 0.6.0, `fetch nasa-gesdisc-kg '? ? ?'` (2,189,878 triples) is refused in
+0.23 s, naming 219 requests and 24 to 49 s.
+
 ### C5. Executors
 
 Streaming for plans the guard calls small: rows in memory, joined in code. Materialize

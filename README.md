@@ -52,6 +52,11 @@ A fetched table's columns are the pattern's variables, four for each: `?zip` is 
 no column, and an anonymous position's is `s`, `p` or `o`. The receipt keeps the
 pattern, so `kgfq export` can put every row back into it and write the triples.
 
+`fetch` counts a pattern before reading it, and refuses one over 1,000,000 rows before any
+row is read, saying how large it is, about how long it would take, and what would make it
+smaller. `--max-rows N` takes a part, `--all` reads it whole, and `KGFQ_FETCH_GUARD_ROWS`
+moves the limit (`off` removes it).
+
 `--bind` carries one step's result into the next without a file between them:
 `--bind affected:gene` gives the pattern's `?gene` the distinct values of the table
 `affected`'s column `gene`, and `--bind chems:c=chem` binds `?c` to the column `chem`. The
