@@ -146,10 +146,12 @@ Two rules make it lossless:
 - **Input tuples are distinct.** A bindings block joins like `VALUES`; a tuple sent twice
   would answer twice, and no column tells the copies apart.
 
-`triples(table, pattern)`, about twenty lines in each client, puts each row's values back into
+`triples(table, receipt)`, about twenty lines in each client, puts each row's values back into
 the pattern and returns the triples. It is lossless for a one-pattern table, and both clients'
 copies are tested against the shared fixtures (§9). `cite` (C11) and RDF export
-(`kgfq export <table> --format nt`) use it.
+(`kgfq export <table> --format nt`) use it. *Landed in kgfq 2026-11-20*
+(`kgfq.workspace.triples`): an export of `? ? ?` from the fixture server parses to the graph
+the bundle was built from.
 
 Why bindings and not triples:
 

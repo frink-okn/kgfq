@@ -15,6 +15,7 @@ import pyarrow as pa
 import rdflib
 
 from ..client.terms import (
+    TRIPLE_COLUMNS,
     BNode,
     Iri,
     Literal,
@@ -24,8 +25,6 @@ from ..client.terms import (
     variable_columns,
 )
 from .engine import EngineRun
-
-TRIPLE_COLUMNS = ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
 
 
 class ResultError(ValueError):

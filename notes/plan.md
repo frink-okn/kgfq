@@ -696,6 +696,18 @@ Decided while building:
 
 Tables written before this are not read: none is being kept.
 
+*Landed 2026-11-20 — `triples()` and `kgfq export`* (`kgfq.workspace.triples`,
+`tests/test_triples.py`). `triples(table, receipt)` returns a table's triples under
+`s, p, o, o_kind, o_lang, o_datatype`: a `bindings` table's rows put back into its
+receipt's pattern, a `triples` table as it is. A table that answers no single pattern,
+a SELECT or SQL result, is refused by name, never guessed at. `kgfq export <table>`
+writes them as N-Triples, to stdout or `--out`. It renders a table the workspace holds,
+makes no request, and is not a step. Verified by fetching five patterns from the fixture
+server, `? ? ?` among them, and comparing each export, parsed by rdflib, with the same
+pattern over the `.nt` the bundle was built from: equal, one line a row. An IRI that
+N-Triples' `IRIREF` cannot hold (a space, a brace) is written with `\uXXXX`, so a graph's
+malformed IRI is still one parseable line.
+
 *Changed 2026-11-20 — the content hash is specified.* It was SHA-256 over each row as
 compact JSON, the rows sorted as Python strings: defined by this implementation, and not
 reproducible in JavaScript, which orders strings by UTF-16 unit and spells JSON escapes and
@@ -1105,6 +1117,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq lint <file.rq>` | author | `kgfq.lint`, §5.6 |
 | `kgfq sparql <file.rq> --dataset … [--endpoint url]` | complete | lint, then launch `kgf-sparql` (§5.2); refuses politely when it is not installed |
 | `kgfq raw <method> <path> [--body]` | debug | one unplanned request, output marked `unplanned` |
+| `kgfq export <table> [--format nt] [--out file]` | local | the triples a table stands for, as N-Triples (C6) |
 | `kgfq receipt <table>` | audit | the receipt attached to a table |
 | `kgfq replay [--from N]` | audit | re-execute the log's stored plans and compare hashes (C10) |
 | `kgfq cite <table> --row N` | audit | the source triples behind a row (C11) |

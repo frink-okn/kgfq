@@ -50,6 +50,7 @@ from ..sparql import (
 from ..workspace.log import Step
 from ..workspace.receipts import fetch_receipt
 from ..workspace.store import Workspace, WorkspaceError
+from ..workspace.triples import triples, write_ntriples
 
 DEFAULT_PREFIXES = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
@@ -722,6 +723,24 @@ class Cli:
             if d.suggestion:
                 stream.write(f"      → {d.suggestion}\n")
 
+    def export(self) -> int:
+        """``kgfq export <table>``: the triples a table stands for, as
+        N-Triples, to stdout or ``--out``. A fetched table's rows go back into
+        its receipt's pattern (C6). It renders a table the workspace already
+        holds, so it makes no request and is not a step."""
+        a = self.args
+        result = triples(self.workspace.read_table(a.table), self.workspace.read_receipt(a.table))
+        if not a.out:
+            write_ntriples(result, self.out)
+            return 0
+        path = Path(a.out)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as f:
+            written = write_ntriples(result, f)
+        handle = {"table": a.table, "format": a.format, "triples": written, "path": str(path)}
+        self.emit(handle, table=[[k, v] for k, v in handle.items()], header=["field", "value"])
+        return 0
+
     def receipt(self) -> int:
         self.emit(self.workspace.read_receipt(self.args.table))
         return 0
@@ -1061,6 +1080,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="run despite a strong diagnostic or the review threshold",
     )
 
+    ex = sub.add_parser("export", help="a table's triples as N-Triples")
+    ex.add_argument("table")
+    ex.add_argument("--format", choices=["nt"], default="nt")
+    ex.add_argument("--out", help="a file to write (default: stdout)")
     r = sub.add_parser("receipt", help="the receipt attached to a table")
     r.add_argument("table")
     lg = sub.add_parser("log", help="the session log")

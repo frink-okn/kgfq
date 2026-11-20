@@ -213,6 +213,9 @@ def term_to_json(term: Term) -> dict[str, Any]:
 
 TERM_KINDS = ("iri", "literal", "bnode")
 COMPANIONS = ("kind", "lang", "datatype")
+# A table of triples: the subject and predicate need no companions, since a
+# predicate is an IRI and a subject is one unless it keeps a blank node's `_:`.
+TRIPLE_COLUMNS = ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
 
 
 def variable_columns(var: str) -> list[str]:
