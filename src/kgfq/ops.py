@@ -23,13 +23,23 @@ import pyarrow as pa
 from .client.endpoint import Endpoint, Release
 from .client.errors import CapabilityUnavailable, KgfqError
 from .client.session import Session
-from .client.terms import Iri, Literal, Term, term_columns, term_from_json, variable_columns
+from .client.terms import (
+    Iri,
+    Literal,
+    Term,
+    format_term,
+    term_columns,
+    term_from_json,
+    variable_columns,
+)
+from .workspace.bind import bind_rows, unmatched_report
 from .workspace.log import Step
 from .workspace.receipts import completeness, new_receipt, request_entries, source_of, totals_of
-from .workspace.store import Workspace
+from .workspace.store import Workspace, WorkspaceError
 
 SEARCH_LIMIT = 20
 SEARCH_VARIABLES = ["subject", "label", "predicate", "matched", "match_kind", "score"]
+LABEL_VARIABLES = ["iri", "label", "graph"]
 
 
 @dataclass
@@ -178,4 +188,118 @@ def search(
             }
             for hit in hits
         ],
+    }
+
+
+def labels(
+    ctx: Context,
+    table: str,
+    column: str,
+    *,
+    graphs: list[str] | None = None,
+    out: str | None = None,
+) -> dict[str, Any]:
+    """``labels``: one label per IRI in a column of an earlier table, as a new
+    table to join, for when names have to be part of the data (doc 03's
+    ``/labels``; ``../kgf-explorer``'s operation of the name).
+
+    Each graph picks a label by its own declared label predicates. The graphs
+    are asked in order and the first label found wins; the default is the
+    graphs the table was read from, which is often not where the names are, so
+    an IRI no graph labels is a row with no label, and the handle counts them
+    with a sample. Label declarations are wrong on a share of bundles (C7): a
+    missing label is a fact about the declaration as often as about the node."""
+    ws = ctx.workspace
+    _, rows = bind_rows(ws, {"table": table, "columns": {"iri": column}})
+    iris = [r[0].value for r in rows if isinstance(r[0], Iri)]
+    if not iris:
+        raise WorkspaceError(
+            f"table {table}'s column {column!r} holds no IRI to label"
+            + (f": its {len(rows)} values are literals or blank nodes" if rows else "")
+        )
+    source = ws.read_receipt(table)["core"]
+    asked = list(graphs or [])
+    if not asked:
+        asked = [
+            f"{s['dataset']}@{s['origin']}"
+            for s in source.get("sources", [])
+            if s.get("kind") == "kgf"
+        ]
+    if not asked:
+        raise WorkspaceError(
+            f"table {table} was read from no graph, so name the graphs to ask for labels (--graph)"
+        )
+    name = ws.check_name(out or table_name("labels", f"{table} {column}"))
+    resolved = []
+    for graph in asked:
+        ep, rel = ctx.resolve(graph)
+        if "labels" not in rel.links:
+            raise CapabilityUnavailable(
+                f"{rel.dataset}@{rel.version} on {ep.origin} publishes no `labels` link"
+            )
+        resolved.append((ep, rel))
+    step = ctx.step("labels", table=table, column=column, graphs=graphs, out=name)
+    step.input_table(table)
+    found: dict[str, tuple[str, str]] = {}
+    records = []
+    for ep, rel in resolved:
+        step.pin(pin_of(rel))
+        remaining = [i for i in iris if i not in found]
+        if not remaining:
+            continue
+        with ep.trace() as t:
+            answer = ep.labels(rel, remaining)
+        records.extend(t.records)
+        for iri, label in answer.items():
+            if label is not None:
+                found[iri] = (str(label), rel.dataset)
+    result = bindings_table(
+        LABEL_VARIABLES,
+        [
+            {
+                "iri": Iri(i),
+                "label": Literal(found[i][0]) if i in found else None,
+                "graph": Literal(found[i][1]) if i in found else None,
+            }
+            for i in iris
+        ],
+    )
+    report = unmatched_report(
+        ["iri"],
+        [[Iri(i)] for i in iris],
+        {(format_term(Iri(i)),) for i in found},
+        complete=True,
+        bind={"table": table, "columns": {"iri": column}},
+    )
+    receipt = new_receipt(
+        kind="labels",
+        step=step.step,
+        grade="bundle",
+        sources=[source_of(rel) for _, rel in resolved],
+        shape="bindings",
+        requests=request_entries(records),
+        totals=totals_of(records),
+        completeness=completeness(records),
+        inputs={table: step.record["inputs"][table]},
+        bindings=report,
+        detail={"column": column, "not_iris": len(rows) - len(iris)},
+    )
+    info = ws.write_table(name, result, receipt)
+    step.receipt(info.receipt)
+    step.table(info.receipt)
+    step.finish()
+    return {
+        "table": info.name,
+        "path": str(info.path),
+        "rows": info.rows,
+        "columns": LABEL_VARIABLES,
+        "grade": "bundle",
+        "graphs": [rel.dataset for _, rel in resolved],
+        "labeled": report["matched"],
+        "unlabeled": report["unmatched"],
+        "unlabeled_sample": [t[0] for t in report["unmatched_sample"]],
+        "not_iris": len(rows) - len(iris),
+        "requests": len(records),
+        "step": step.step,
+        "content_hash": info.content_hash,
     }

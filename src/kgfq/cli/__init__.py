@@ -386,6 +386,13 @@ class Cli:
         )
         return 0
 
+    def labels(self) -> int:
+        """``kgfq labels``: a table of one label per IRI in a table's column."""
+        a = self.args
+        handle = ops.labels(self.ctx, a.table, a.column, graphs=a.graph, out=a.out)
+        self.emit(handle, table=[[k, v] for k, v in handle.items()], header=["field", "value"])
+        return 0
+
     def search(self) -> int:
         """``kgfq search``: the hits, and the table they are filed as."""
         a = self.args
@@ -1141,6 +1148,16 @@ def build_parser() -> argparse.ArgumentParser:
     se.add_argument("text", help="words to find")
     se.add_argument("--limit", type=int, default=ops.SEARCH_LIMIT, help="most hits to keep")
     se.add_argument("--out", help="table name (default: search_<the words>)")
+
+    lb = sub.add_parser("labels", help="one label per IRI in a table's column, as a new table")
+    lb.add_argument("table")
+    lb.add_argument("column")
+    lb.add_argument(
+        "--graph",
+        action="append",
+        help="a graph to ask, in order; the first label found wins (default: the table's own)",
+    )
+    lb.add_argument("--out", help="table name (default: labels_<table>_<column>)")
 
     sm = sub.add_parser("sample", help="a seeded sample of a pattern")
     sm.add_argument("dataset")

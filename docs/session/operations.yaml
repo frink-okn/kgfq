@@ -296,7 +296,9 @@ operations:
         table: {type: string}
         column: {type: string}
         graphs: *graphs
-    implemented_by: {kgf-explorer: labels}
+        out: {type: string, description: "kgfq: the table's name."}
+    table: bindings
+    implemented_by: {kgf-explorer: labels, kgfq: labels}
 
   sql:
     meaning: >-

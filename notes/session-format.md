@@ -364,7 +364,7 @@ and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the 
 | `fetch` | bind from a table; the visitor's budget stops a run and keeps what arrived (its D10) | `--values`, `--bind` (2026-11-20), `--max-rows`, R1/R2 plan; refused over 1,000,000 rows unless `--all` (the guard, 2026-11-20) | have; the two bound a fetch differently, which the format need not reconcile |
 | `describe`, `incoming`, `instances`, `neighbors`, `two_hop` | SPARQL templates in the tab | — | **kgfq needs**, as fetch plans, not SPARQL: each is one or two patterns |
 | `sql` | one SELECT, locked DuckDB-Wasm | — (C8 not built) | **kgfq needs** |
-| `labels` | `/labels`, beside tables | — (C7 not built) | **kgfq needs** |
+| `labels` | `/labels`, beside tables | `labels` (2026-11-20): a table to join | have; labels shown beside a table's rows, as the explorer does when it shows one, wait for `read_table` |
 | `read_table` | rows for the model, paged | — | **kgfq-mcp needs** (handles, never rows, §7 of the plan) |
 | `terms` | `/terms` counts and lists | — | **kgfq needs** |
 | `overlap` | namespaces both ways | — | **kgfq needs** |
