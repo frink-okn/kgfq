@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 
+import pyarrow.parquet as pq
 import pytest
 
 from kgfq.cli import _tokenize, main
@@ -261,3 +262,22 @@ def test_an_anonymous_position_does_not_join_a_variable_named_like_it(ws, tmp_pa
     )
     assert payload["triples"] == 4
     assert sum(r["count"] for r in payload["rows"]) == 4
+
+
+def test_count_and_fetch_keep_an_anonymous_position_apart_too(ws, tmp_path):
+    # `?o ex:affects ?`: the subject is called `o` and the object has no name.
+    # The body spelled the object `?o` as well, so a bound count and a bound
+    # fetch asked for chemicals that affect themselves; and a plain fetch keyed
+    # both positions `o`, so each row's subject came back as its object.
+    values = tmp_path / "chems.tsv"
+    values.write_text("?o\n<http://example.org/chem/1>\n<http://example.org/chem/2>\n")
+    payload, _ = run("count", "chemkg", "?o ex:affects ?", "--values", str(values), workspace=ws)
+    assert [c["count"] for c in payload["counts"]] == [2, 2]
+    chems = {"http://example.org/chem/1", "http://example.org/chem/2"}
+    for name, extra, rows in (("bound", ["--values", str(values)], 4), ("whole", [], 24)):
+        handle, _ = run("fetch", "chemkg", "?o ex:affects ?", *extra, "--out", name, workspace=ws)
+        assert handle["rows"] == rows
+        table = pq.read_table(ws / "tables" / f"{name}.parquet")
+        subjects, objects = set(table["s"].to_pylist()), set(table["o"].to_pylist())
+        assert all("/chem/" in s for s in subjects) and all("/gene/" in o for o in objects)
+        assert name == "whole" or subjects == chems

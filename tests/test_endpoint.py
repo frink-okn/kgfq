@@ -228,3 +228,14 @@ def test_query_refused_by_a_real_proxy_falls_back_to_post(chem):
         e.close()
     finally:
         proxy.stop()
+
+
+def test_an_anonymous_position_takes_a_name_no_variable_has():
+    """A position's own name where it is free, since that is what the wire and
+    a sample's header have always shown; another where a variable took it."""
+    assert Pattern(p=AFFECTS, o=Var("g")).variables() == {"s": "s", "o": "g"}
+    clash = Pattern(s=Var("o"), p=AFFECTS)
+    assert clash.variables() == {"s": "o", "o": "_kgfq_o"}
+    assert clash.as_body() == {"s": "?o", "p": format_term(AFFECTS), "o": "?_kgfq_o"}
+    assert Pattern(s=Var("_kgfq_o"), p=Var("o")).variables()["o"] == "_kgfq_o_"
+    assert Pattern().as_body() == {"s": "?s", "p": "?p", "o": "?o"}

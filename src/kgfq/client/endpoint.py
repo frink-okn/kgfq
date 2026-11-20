@@ -52,13 +52,25 @@ class Pattern:
         return {k: v for k, v in (("s", self.s), ("p", self.p), ("o", self.o)) if _is_term(v)}
 
     def variables(self) -> dict[str, str]:
-        """Position -> caller's name for every unbound position."""
+        """Position -> name for every unbound position: the caller's, and for an
+        anonymous position its own (``s``, ``p``, ``o``) unless a variable of
+        the pattern is called that, when it takes a name none has. One name for
+        two positions is an equality: ``?o <p> ?`` with its object also called
+        ``o`` asks for values ``x`` with ``x <p> x``, and keys a row's subject
+        and object alike (C1, 2026-11-20)."""
+        taken = set(self.named())
         out: dict[str, str] = {}
         for pos, v in (("s", self.s), ("p", self.p), ("o", self.o)):
             if isinstance(v, Var):
                 out[pos] = v.name
             elif v is None:
-                out[pos] = pos
+                name = pos
+                if name in taken:
+                    name = f"_kgfq_{pos}"
+                    while name in taken:
+                        name += "_"
+                taken.add(name)
+                out[pos] = name
         return out
 
     def named(self) -> list[str]:
@@ -127,15 +139,13 @@ class Pattern:
         return {pos: format_term(t) for pos, t in self.bound().items()}
 
     def as_body(self) -> dict[str, str]:
-        body: dict[str, str] = {}
-        for pos, v in (("s", self.s), ("p", self.p), ("o", self.o)):
-            if _is_term(v):
-                body[pos] = format_term(v)
-            elif isinstance(v, Var):
-                body[pos] = f"?{v.name}"
-            else:
-                body[pos] = f"?{pos}"
-        return body
+        """The pattern as a body spells it: every position present, each
+        variable by the name :meth:`variables` gives it."""
+        names = self.variables()
+        return {
+            pos: format_term(v) if _is_term(v) else f"?{names[pos]}"
+            for pos, v in (("s", self.s), ("p", self.p), ("o", self.o))
+        }
 
 
 def _is_term(v: object) -> TypeGuard[Term]:
@@ -831,7 +841,7 @@ class Endpoint:
 
         pattern.check_bindings(vars_ or [])
         template: dict[str, Any] = {
-            "pattern": _body_pattern(pattern),
+            "pattern": pattern.as_body(),
             "group_by": group_by,
             "limit": size,
         }
@@ -883,23 +893,6 @@ class Endpoint:
 
     def close(self) -> None:
         self._client.close()
-
-
-def _body_pattern(pattern: Pattern) -> dict[str, str]:
-    """The pattern as a body names it, with every anonymous position given a
-    name no variable of the pattern has. :meth:`Pattern.as_body` names one
-    ``?s``/``?p``/``?o``, which joins it to a variable the caller happened to
-    call ``o``: ``?o <p> ?`` would ask for values ``x`` with ``x <p> x``."""
-    taken = set(pattern.named())
-    body = pattern.as_body()
-    for pos, v in (("s", pattern.s), ("p", pattern.p), ("o", pattern.o)):
-        if v is None:
-            name = f"_kgfq_{pos}"
-            while name in taken:
-                name += "_"
-            taken.add(name)
-            body[pos] = f"?{name}"
-    return body
 
 
 def _rekey(row: Mapping[str, Any], names: Mapping[str, str]) -> dict[str, Term]:

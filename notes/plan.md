@@ -1080,7 +1080,12 @@ chunks hold disjoint rows. Before any request it refuses four things:
 
 The body gives anonymous positions names no pattern variable has. `Pattern.as_body`
 names them `?s`/`?p`/`?o`, so `?o <p> ?` under bindings for `?o` became a self-join.
-That helper still does so for `fetch` and `count`, which is an open item. Paging
+That helper still does so for `fetch` and `count`, which is an open item.
+*Closed 2026-11-20:* on the fixture a bound `count` of `?o ex:affects ?` answered 0 for
+chemicals that each affect two genes, and a plain `fetch` of it wrote every row's object
+as its subject, since both positions were keyed `o`. `Pattern.variables` now gives an
+anonymous position its own name only where no variable has it, and `as_body` spells what
+`variables` names, so `fetch`, `count` and `distinct` send one body. Paging
 refuses a page that says it is incomplete but carries no cursor, and a cursor that
 does not advance. An independent review of 2026-11-07 found these, and they are
 untested against a misbehaving server, since the tests use real ones.
