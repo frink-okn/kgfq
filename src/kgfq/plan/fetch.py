@@ -2,6 +2,11 @@
 C5: rule R1 (count before fetch) and rule R2 (bind-join versus column-fetch by
 a computable rule from the endpoint's own caps), producing an inspectable plan
 (D12) before any data request is made.
+
+A fetched table is the pattern's bindings (C6, 2026-11-20): four columns per
+variable, none for a constant, which stays in the pattern the receipt carries.
+:func:`fetch_variables` names the columns and refuses a pattern that cannot be
+given them.
 """
 
 from __future__ import annotations
@@ -14,11 +19,58 @@ from typing import Any
 import pyarrow as pa
 
 from ..client.endpoint import Endpoint, Pattern, Release
+from ..client.errors import BadColumns
 from ..client.statistics import Statistics
-from ..client.terms import Term, format_term, term_columns
+from ..client.terms import Term, Var, format_term, term_columns, variable_columns
 
 PLAN_SCHEMA = "kgfq.plan/1"
-TABLE_COLUMNS = ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
+POSITIONS = {"s": "subject", "p": "predicate", "o": "object"}
+
+
+def fetch_variables(pattern: Pattern) -> list[str]:
+    """The term columns of the pattern's fetched table: its variables in
+    position order, each once. An anonymous position's column is the position's
+    own name, ``s``, ``p`` or ``o``, so ``? ? ?`` fetches the triples under the
+    columns a triples table has.
+
+    Refused, since every column needs a name of its own and the name is the
+    caller's to choose: a pattern with no variable, whose table would have no
+    column; an anonymous position whose name a variable of the pattern already
+    has; and two variables whose columns collide (``?c`` and ``?c_kind``)."""
+    names = pattern.variables()
+    spelled = pattern.spelled()
+    if not names:
+        raise BadColumns(
+            f"`{spelled}` has no variable, so its table would have no column. "
+            "`count` says whether the triple is there."
+        )
+    for pos, v in (("s", pattern.s), ("p", pattern.p), ("o", pattern.o)):
+        if v is None and names[pos] != pos:
+            holder = next(POSITIONS[q] for q, n in names.items() if n == pos)
+            taken = set(names.values())
+            name = POSITIONS[pos]
+            while name in taken:
+                name += "_"
+            s, p, o = (
+                Var(name) if q == pos else w
+                for q, w in (("s", pattern.s), ("p", pattern.p), ("o", pattern.o))
+            )
+            raise BadColumns(
+                f"`{spelled}` leaves its {POSITIONS[pos]} unnamed, and that column would be "
+                f"`{pos}`, the name the pattern gives its {holder}. Name the {POSITIONS[pos]}, "
+                f"e.g. `{Pattern(s, p, o).spelled()}`."
+            )
+    variables = list(dict.fromkeys(names.values()))
+    seen: dict[str, str] = {}
+    for v in variables:
+        for column in variable_columns(v):
+            if column in seen:
+                raise BadColumns(
+                    f"`{spelled}`: ?{seen[column]} and ?{v} would both need the column "
+                    f"`{column}`. Rename one of them."
+                )
+            seen[column] = v
+    return variables
 
 
 @dataclass(slots=True)
@@ -74,12 +126,26 @@ class Plan:
         }
 
 
+def distinct_rows(rows: Sequence[Sequence[Term]]) -> list[Sequence[Term]]:
+    """The input tuples, each once, in the order given. A bindings block joins
+    like ``VALUES``, so a tuple given twice would answer twice, and the table
+    has no index column to tell the copies apart."""
+    seen: dict[tuple[str, ...], Sequence[Term]] = {}
+    for r in rows:
+        seen.setdefault(tuple(format_term(t) for t in r), r)
+    return list(seen.values())
+
+
 def intent_of(
     pattern: Pattern, vars_: Sequence[str] | None, rows: Sequence[Sequence[Term]] | None
 ) -> dict[str, Any]:
     intent: dict[str, Any] = {"kind": "fetch", "pattern": pattern.as_body()}
     if rows is not None:
-        intent["bindings"] = {"vars": list(vars_ or []), "rows": len(rows)}
+        intent["bindings"] = {
+            "vars": list(vars_ or []),
+            "rows": len(rows),
+            "distinct": len(distinct_rows(rows)),
+        }
     return intent
 
 
@@ -102,6 +168,7 @@ def plan_fetch(
         pattern.check_bindings(vars_ or [])
     else:
         pattern.check_names_are_carried()
+    fetch_variables(pattern)
     caps = {
         "max_limit": endpoint.cap("max_limit", 10000),
         "max_bindings": endpoint.cap("max_bindings", 200),
@@ -131,7 +198,7 @@ def plan_fetch(
             )
         )
         return plan
-    k = len(rows)
+    k = len(distinct_rows(rows))
     bind_requests = max(1, math.ceil(k / caps["max_bindings"]))
     plan.evidence["r2"] = {
         "k": k,
@@ -185,62 +252,45 @@ def execute_fetch(
     rows: Sequence[Sequence[Term]] | None = None,
     max_rows: int | None = None,
 ) -> pa.Table:
-    """Run the plan's data step and return the triples as an Arrow table with
-    the doc 06 §6.3 columns, plus ``binding`` when bindings were supplied.
+    """Run the plan's data step and return its rows as an Arrow table: four
+    columns per variable of the pattern (:func:`fetch_variables`), whichever
+    route R2 chose. A bound variable is a column like any other, so the table
+    says which input values found something without an index beside it.
     Stopping at ``max_rows`` is said to the read, which marks the response it
     stopped at when the server still had rows; the receipt reads that (C6)."""
     step = plan.steps[-1]
-    names = pattern.variables()
-    const = {pos: t for pos, t in pattern.bound().items()}
-    out: dict[str, list[Any]] = {c: [] for c in TABLE_COLUMNS}
-    binding_col: list[int] = []
+    variables = fetch_variables(pattern)
+    out: dict[str, list[str | None]] = {c: [] for v in variables for c in variable_columns(v)}
+    taken = 0
 
-    def emit(row: dict[str, Term], binding: int | None) -> None:
-        s = row.get(names.get("s", "")) if "s" in names else const.get("s")
-        p = row.get(names.get("p", "")) if "p" in names else const.get("p")
-        o = row.get(names.get("o", "")) if "o" in names else const.get("o")
-        out["s"].append(term_columns(s)[0])
-        out["p"].append(term_columns(p)[0])
-        ov, ok, ol, od = term_columns(o)
-        out["o"].append(ov)
-        out["o_kind"].append(ok)
-        out["o_lang"].append(ol)
-        out["o_datatype"].append(od)
-        if binding is not None:
-            binding_col.append(binding)
+    def emit(row: dict[str, Term]) -> None:
+        for v in variables:
+            for column, cell in zip(variable_columns(v), term_columns(row.get(v)), strict=True):
+                out[column].append(cell)
 
+    if rows is not None:
+        rows = distinct_rows(rows)
     if step.op == "bindings":
         bound = endpoint.bindings(release, pattern, list(vars_ or []), rows or [])
-        for index, row in bound:
-            emit(row, index)
-            if max_rows is not None and len(out["s"]) >= max_rows:
+        for _index, row in bound:
+            emit(row)
+            taken += 1
+            if max_rows is not None and taken >= max_rows:
                 bound.stop("max_rows")
                 break
     else:
-        wanted: dict[str, dict[str, int]] | None = None
+        wanted: set[tuple[str, ...]] | None = None
         if rows is not None:
-            wanted = {}
-            for i, r in enumerate(rows):
-                for v, t in zip(vars_ or [], r, strict=True):
-                    wanted.setdefault(v, {}).setdefault(format_term(t), i)
+            wanted = {tuple(format_term(t) for t in r) for r in rows}
         scan = endpoint.fragment(release, pattern)
         for row in scan:
-            binding = None
-            if wanted:
-                hit = True
-                for v, table in wanted.items():
-                    val = row.get(v)
-                    if val is None or format_term(val) not in table:
-                        hit = False
-                        break
-                    binding = table[format_term(val)]
-                if not hit:
+            if wanted is not None:
+                got = tuple(format_term(row[v]) if v in row else "" for v in vars_ or [])
+                if got not in wanted:
                     continue
-            emit(row, binding if wanted else None)
-            if max_rows is not None and len(out["s"]) >= max_rows:
+            emit(row)
+            taken += 1
+            if max_rows is not None and taken >= max_rows:
                 scan.stop("max_rows")
                 break
-    arrays = {c: pa.array(out[c], type=pa.string()) for c in TABLE_COLUMNS}
-    if rows is not None:
-        arrays["binding"] = pa.array(binding_col, type=pa.int64())
-    return pa.table(arrays)
+    return pa.table({c: pa.array(cells, type=pa.string()) for c, cells in out.items()})

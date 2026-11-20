@@ -8,7 +8,7 @@ from typing import Any
 
 from ..client.endpoint import Release, RequestRecord, Trace
 
-RECEIPT_SCHEMA = "kgfq.receipt/3"
+RECEIPT_SCHEMA = "kgfq.receipt/4"
 
 # The truncations a followed cursor repairs: doc 03 §3.6 promises every cursor
 # resumes with no loss and no duplication, budget interruptions included. Only
@@ -81,9 +81,14 @@ def fetch_receipt(
     intent: Mapping[str, Any],
     plan: Mapping[str, Any] | None,
     trace: Trace,
+    pattern: Mapping[str, str] | None = None,
     approximations: Iterable[str] = (),
     inputs: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
+    """The receipt of a table read from one release. Its ``shape`` is
+    ``bindings``; ``pattern`` is the one pattern the table answers, each
+    position a term or the ``?variable`` whose column holds it, which is what
+    turns a row back into its triple."""
     records = trace.records
     return {
         "schema": RECEIPT_SCHEMA,
@@ -91,6 +96,8 @@ def fetch_receipt(
         "step": step,
         "grade": "bundle",
         "source": source_of(release),
+        "shape": "bindings",
+        "pattern": dict(pattern) if pattern else None,
         "intent": dict(intent),
         "plan": dict(plan) if plan else None,
         "requests": request_entries(records),

@@ -1,8 +1,8 @@
 # The session format — a proposal
 
-Proposed 2026-11-20 for issue #3 (parity and compatibility with `../kgf-explorer`). Nothing
-here is built. It changes one decision of record, C6's "every fetched table is a set of
-triples" (§4.3); until this proposal is accepted, plan C6 and `CLAUDE.md` stand.
+Proposed 2026-11-20 for issue #3 (parity and compatibility with `../kgf-explorer`), accepted
+the same day, and landing in the order of §10; each part says when it landed. It changes one
+decision of record, C6's "every fetched table is a set of triples" (§4.3).
 
 ## 1. The problem
 
@@ -118,8 +118,10 @@ terms (a schema listing's classes are IRIs), is open (§11).
 
 ### 4.3 Fetch tables are bindings (changes kgfq C6)
 
-**Proposed:** a `fetch` table is stored as `bindings` with its pattern in the receipt, in both
-clients. Today kgfq stores `s, p, o, …`, and the explorer stores the pattern's variables.
+A `fetch` table is stored as `bindings` with its pattern in the receipt, in both clients.
+kgfq stored `s, p, o, …`; the explorer stores the pattern's variables. *Landed in kgfq
+2026-11-20* (`kgfq.plan.fetch.fetch_variables`, receipt `kgfq.receipt/4`; plan C6 records
+what was decided while building).
 
 For the pattern `?prov <https://schema.org/postalCode> ?zip`:
 
@@ -131,10 +133,18 @@ Two rules make it lossless:
 
 - **Every variable position has a column, anonymous ones included.** An anonymous position is
   named after itself (`s`, `p`, `o`), as the explorer's `position()` does now. A name already
-  taken by a pattern variable is a refusal, never a silent self-join: `as_body` names
+  taken by a pattern variable is a refusal, never a silent self-join: `as_body` named
   anonymous positions the same way and turned `?o <p> ?` under bindings for `?o` into one
-  (plan §6, 2026-11-07). Whether the explorer refuses that collision is unchecked (§11).
-- **A constant position has no column** and is kept in the pattern.
+  (plan §6, closed 2026-11-20). Whether the explorer refuses that collision is unchecked
+  (§11).
+- **A constant position has no column** and is kept in the pattern. So a pattern with no
+  variable has no table, and is refused: `count` answers it.
+- **Columns do not collide.** `?c` and `?c_kind` would both need `c_kind`; refused.
+- **A repeated variable is one column**, and the equality is the server's to apply, which it
+  does only when the bindings bind the variable in every row. Without bindings it is
+  refused, since a GET sends no names (plan §6, 2026-11-20).
+- **Input tuples are distinct.** A bindings block joins like `VALUES`; a tuple sent twice
+  would answer twice, and no column tells the copies apart.
 
 `triples(table, pattern)`, about twenty lines in each client, puts each row's values back into
 the pattern and returns the triples. It is lossless for a one-pattern table, and both clients'

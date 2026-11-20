@@ -1,10 +1,8 @@
-"""Reading the engine's output into workspace tables (C6). SELECT rows carry one
-``(value, lang, datatype)`` triple per variable — the doc 06 §6.3 column
-convention applied per variable — and CONSTRUCT and DESCRIBE results are
-triples, so they take a fetched table's exact columns. A simple literal is
-stored with ``xsd:string`` as its datatype (RDF 1.1): an IRI and a string then
-never share an encoding, and the content hash does not depend on whether the
-engine wrote the datatype out."""
+"""Reading the engine's output into workspace tables (C6). SELECT rows are
+bindings: four columns per variable, as a fetched table has them. CONSTRUCT and
+DESCRIBE results are triples, under ``s, p, o`` and the object's companions.
+``term_columns`` is the one encoding of a term, so the content hash does not
+depend on whether the engine wrote a plain literal's datatype out."""
 
 from __future__ import annotations
 
@@ -16,7 +14,15 @@ from typing import Any
 import pyarrow as pa
 import rdflib
 
-from ..client.terms import BNode, Iri, Literal, Term, term_columns, term_from_json
+from ..client.terms import (
+    BNode,
+    Iri,
+    Literal,
+    Term,
+    term_columns,
+    term_from_json,
+    variable_columns,
+)
 from .engine import EngineRun
 
 TRIPLE_COLUMNS = ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
@@ -24,10 +30,6 @@ TRIPLE_COLUMNS = ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
 
 class ResultError(ValueError):
     """The engine's output is not a document this module can read."""
-
-
-def variable_columns(var: str) -> list[str]:
-    return [var, f"{var}_kind", f"{var}_lang", f"{var}_datatype"]
 
 
 def _columns(
@@ -72,7 +74,7 @@ def _rdflib_term(term: Any) -> Term:
 
 
 def triples_table(path: Path) -> pa.Table:
-    """An N-Triples file as a triples table with a fetched table's columns."""
+    """An N-Triples file as a triples table."""
     graph = rdflib.Graph()
     try:
         graph.parse(path, format="nt")

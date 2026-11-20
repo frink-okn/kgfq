@@ -403,6 +403,7 @@ class Cli:
                 intent=plan.intent,
                 plan=plan.as_dict(),
                 trace=t,
+                pattern=pattern.as_body(),
                 approximations=approximations,
                 inputs=inputs,
             )
@@ -597,11 +598,12 @@ class Cli:
         budget_name = (run.receipt or {}).get("outcome", {}).get("budget")
         approximations: list[str] = []
         table: pa.Table | None = None
+        shape: str | None = None
         boolean: bool | None = None
         read_error: str | None = None
         if contract == "complete" or (contract == "aborted" and budget_name == "max_rows"):
             try:
-                _, result = read_output(run)
+                result_type, result = read_output(run)
             except ResultError as e:
                 read_error = str(e)
             else:
@@ -609,6 +611,7 @@ class Cli:
                     boolean = result
                 else:
                     table = result
+                    shape = "triples" if result_type == "quads" else "bindings"
             if contract == "aborted" and read_error is None:
                 approximations.append(
                     f"stopped at --max-rows {budget.max_rows}: which rows, not how many, is unspecified"
@@ -625,6 +628,7 @@ class Cli:
             engine_receipt=pointer,
             inputs=inputs,
             approximations=approximations,
+            shape=shape,
         )
         if read_error:
             contract = "error"

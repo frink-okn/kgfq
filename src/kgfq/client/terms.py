@@ -12,7 +12,7 @@ produced on the way *out* only for display.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -212,6 +212,26 @@ def term_to_json(term: Term) -> dict[str, Any]:
 
 
 TERM_KINDS = ("iri", "literal", "bnode")
+COMPANIONS = ("kind", "lang", "datatype")
+
+
+def variable_columns(var: str) -> list[str]:
+    """The four columns a table stores one variable's terms in (C6): the value,
+    then its kind, language and datatype, as :func:`term_columns` gives them."""
+    return [var, *(f"{var}_{c}" for c in COMPANIONS)]
+
+
+def term_column_names(columns: Sequence[str]) -> list[str]:
+    """The columns of a table that hold term values: every column but the
+    companions of another. A triples table's ``s`` and ``p`` have none and
+    count; ``o_kind`` is ``o``'s and does not."""
+    present = set(columns)
+    out = []
+    for c in columns:
+        base, _, tail = c.rpartition("_")
+        if not (tail in COMPANIONS and base in present):
+            out.append(c)
+    return out
 
 
 def term_columns(

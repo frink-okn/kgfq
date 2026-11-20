@@ -46,7 +46,13 @@ def fetched(e, rel, pattern, *, vars_=None, rows=None, max_rows=None, stats=None
         plan = plan_fetch(e, rel, pattern, vars_=vars_, rows=rows, stats=stats)
         table = execute_fetch(e, rel, pattern, plan, vars_=vars_, rows=rows, max_rows=max_rows)
         receipt = fetch_receipt(
-            step=1, kind="fetch", release=rel, intent=plan.intent, plan=plan.as_dict(), trace=t
+            step=1,
+            kind="fetch",
+            release=rel,
+            intent=plan.intent,
+            plan=plan.as_dict(),
+            trace=t,
+            pattern=pattern.as_body(),
         )
     return plan, table, receipt
 
@@ -88,12 +94,18 @@ def test_r2_chooses_bind_join_or_column_fetch_from_the_caps(ep):
     scanned = execute_fetch(ep, rel, pattern, plan2, vars_=["c"], rows=subjects)
 
     def as_set(t):
-        return set(
-            zip(t["s"].to_pylist(), t["o"].to_pylist(), t["binding"].to_pylist(), strict=True)
-        )
+        return set(zip(t["c"].to_pylist(), t["g"].to_pylist(), strict=True))
 
     assert as_set(bound) == as_set(scanned) and len(as_set(bound)) == 6
-    assert set(bound["p"].to_pylist()) == {EX + "affects"}
+    assert (
+        bound.column_names
+        == scanned.column_names
+        == [
+            *("c", "c_kind", "c_lang", "c_datatype"),
+            *("g", "g_kind", "g_lang", "g_datatype"),
+        ]
+    )
+    assert {c for c, _ in as_set(bound)} == {f"{EX}chem/{i}" for i in (1, 2, 3)}
 
 
 def test_fetch_to_workspace_with_receipt(ep, tmp_path):
@@ -104,18 +116,56 @@ def test_fetch_to_workspace_with_receipt(ep, tmp_path):
         plan = plan_fetch(ep, rel, pattern)
         table = execute_fetch(ep, rel, pattern, plan, max_rows=None)
         receipt = fetch_receipt(
-            step=1, kind="fetch", release=rel, intent=plan.intent, plan=plan.as_dict(), trace=t
+            step=1,
+            kind="fetch",
+            release=rel,
+            intent=plan.intent,
+            plan=plan.as_dict(),
+            trace=t,
+            pattern=pattern.as_body(),
         )
     info = ws.write_table("labels", table, receipt)
-    assert info.rows == 12 and info.columns == ["s", "p", "o", "o_kind", "o_lang", "o_datatype"]
+    assert info.rows == 12 and info.columns == [
+        *("s", "s_kind", "s_lang", "s_datatype"),
+        *("o", "o_kind", "o_lang", "o_datatype"),
+    ]
+    assert set(table["s_kind"].to_pylist()) == {"iri"}
     assert set(table["o_kind"].to_pylist()) == {"literal"}
     assert set(table["o_lang"].to_pylist()) == {"en"}
     r = ws.read_receipt("labels")
     assert r["grade"] == "bundle" and r["source"]["content_digest"] == rel.content_digest
+    assert r["shape"] == "bindings" and r["pattern"] == {
+        "s": "?s",
+        "p": "<http://www.w3.org/2000/01/rdf-schema#label>",
+        "o": "?o",
+    }
     assert r["totals"]["requests"] == t.requests == 2 and all(
         q["request_id"] for q in r["requests"]
     )
     assert r["completeness"] == COMPLETE
+
+
+def test_bindings_join_as_tuples_and_a_repeated_tuple_answers_once(ep):
+    """Two bound variables are pairs, never a cross. chem/4 affects G2 as well
+    as G5, and only (chem/1, G2) and (chem/4, G5) are asked for. The
+    scan-and-filter route kept each variable's values apart, so it let
+    (chem/4, G2) through and disagreed with the bind-join. A tuple given twice
+    is one tuple: the table has no index column to tell two answers apart."""
+    rel = ep.release("chemkg")
+    pattern = Pattern(s=Var("c"), p=AFFECTS, o=Var("g"))
+    asked = [(f"{EX}chem/1", f"{EX}gene/G2"), (f"{EX}chem/4", f"{EX}gene/G5")]
+    rows = [[Iri(c), Iri(g)] for c, g in [*asked, asked[0]]]
+    assert ep.count(rel, Pattern(Iri(f"{EX}chem/4"), AFFECTS, Iri(f"{EX}gene/G2"))).value == 1
+    plan = plan_fetch(ep, rel, pattern, vars_=["c", "g"], rows=rows)
+    assert plan.intent["bindings"] == {"vars": ["c", "g"], "rows": 3, "distinct": 2}
+    assert plan.steps[-1].op == "bindings" and plan.evidence["r2"]["k"] == 2
+    bound = execute_fetch(ep, rel, pattern, plan, vars_=["c", "g"], rows=rows)
+    with caps(ep, max_bindings=1):
+        plan2 = plan_fetch(ep, rel, pattern, vars_=["c", "g"], rows=rows)
+        assert plan2.steps[-1].op == "fragment"
+        scanned = execute_fetch(ep, rel, pattern, plan2, vars_=["c", "g"], rows=rows)
+    for table in (bound, scanned):
+        assert sorted(zip(table["c"].to_pylist(), table["g"].to_pylist(), strict=True)) == asked
 
 
 # -- completeness (C6): what the read left behind, not the server's per-page flag
@@ -309,7 +359,9 @@ def test_the_refusal_names_both_sides_and_the_pattern_to_write():
     assert str(e.value).endswith("e.g. `?paper <http://example.org/affects> ?ent`.")
     with pytest.raises(UnboundBindings) as e:
         BOUND.check_bindings(["c", "x"])
-    assert "whose variables are ?c, ?g." in str(e.value) and "`binding` index" in str(e.value)
+    assert "whose variables are ?c, ?g." in str(e.value) and "bound variable's column" in str(
+        e.value
+    )
     with pytest.raises(UnboundBindings, match="which names no variable"):
         Pattern(s=Iri(f"{EX}chem/1"), p=AFFECTS, o=Iri(f"{EX}gene/G1")).check_bindings(["c"])
     BOUND.check_bindings(["c"])

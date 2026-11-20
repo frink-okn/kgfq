@@ -195,7 +195,8 @@ availability.
 specified (doc 06 §6.3) and unimplemented (`kgf-rs` has it only in tests asserting
 it is unsupported). The transport layer maps a KGF response to Arrow-shaped columns
 `s, p, o, o_kind, o_lang, o_datatype`; when the server ships Parquet the same columns
-arrive faster and nothing above the transport changes — once doc 06 §6.3 says how its
+arrive faster and nothing above the transport changes (the table a fetch stores has been
+the pattern's variables since 2026-11-20, C6; this is the transport's row) — once doc 06 §6.3 says how its
 Parquet tells an IRI from a plain literal (§11 item 12). `o_kind` was added
 2026-09-24; see C6.
 
@@ -422,7 +423,7 @@ column-fetch route looked `?x` up in each fetched triple, found nothing, and kep
 row. The answer depended on R2's cost rule. Making the routes agree would mean
 carrying unbound columns through a table whose columns are fixed (C5, C6). Refusing
 loses nothing, because the `binding` column indexes the input rows and an extra
-column joins back in DuckDB. The likelier cause is a mistyped header, and one rule
+column joins back in DuckDB (since 2026-11-20 on a bound variable's own column, C6). The likelier cause is a mistyped header, and one rule
 (every name in the file appears in the pattern) is one an agent learns from a
 single refusal. *Verified by:* `tests/test_fetch.py`, where every door refuses the
 dry run's shape, the wire-name case and a partial overlap, with no request and no
@@ -555,8 +556,8 @@ with single-pattern `fetch` plus SQL composition as the phase-A subset.
 ### C5. Executors
 
 Streaming for plans the guard calls small: rows in memory, joined in code. Materialize
-for heavy plans: one table per fetched pattern with columns `s, p, o, o_kind, o_lang,
-o_datatype` (doc 06 §6.3, plus `o_kind`), written as Parquet into the workspace (D15) and joined in
+for heavy plans: one table per fetched pattern with a column set per variable of the
+pattern (C6, changed 2026-11-20; doc 06 §6.3's columns per term, plus the kind), written as Parquet into the workspace (D15) and joined in
 DuckDB — `LEFT JOIN` for `OPTIONAL`, `DISTINCT`, grouping and sorting in SQL. Plain IRIs in the tables — HDT dictionary ids are per-bundle and
 cannot survive a cross-graph join (implications §3.8), and DuckDB dictionary-encodes
 strings well anyway.
@@ -660,6 +661,41 @@ at a page boundary, mid the last page and after an earlier chunk, incomplete; st
 the last row, complete. The widened set is tested over records: `kgf serve` takes no
 budget, and the fixtures fit its 64 MB and 2 s.
 
+*Changed 2026-11-20 — a fetched table is its pattern's bindings* (`notes/session-format.md`
+§4.3; schema `kgfq.receipt/4`). It was `s, p, o, o_kind, o_lang, o_datatype` plus `binding`,
+whatever the caller named its variables, on the ground that a fetched table is a set of
+triples and `cite` is then a lookup. It is now four columns per variable of the pattern,
+`x, x_kind, x_lang, x_datatype`, and none for a constant. Three reasons:
+- A model reads the table. `kgfq-mcp`'s model will, as `../kgf-explorer`'s does, and its
+  joins read `t3.zip = t5.zip`, where the positional form reads `t3.o = t5.s`. Projecting
+  on every read would be work in both clients for good.
+- It is the one layout fetched data has. A SELECT result was already this (2026-09-10), and
+  `? ? ?` fetches under `s`, `p` and `o`.
+- Nothing is lost. The receipt carries the pattern and travels in the file's footer, so a
+  row still stands for exactly one triple: its values put back into the pattern. `cite`
+  (C11) and RDF export read that.
+
+Decided while building:
+- A receipt states its table's `shape`, `bindings` or `triples` (CONSTRUCT and DESCRIBE
+  results), and `pattern` when the table answers one. Nothing infers a layout from columns.
+- An anonymous position's column is the position's name. Every column needs a name of its
+  own, so `fetch` and `explain` refuse, before any request: a pattern with no variable,
+  whose table would have no column (`count` says whether the triple is there); an anonymous
+  position whose name a variable has (`?o ex:affects ?`), suggesting a name; and two
+  variables whose columns collide (`?c`, `?c_kind`). `count` and `distinct` write no table
+  and still answer those.
+- `binding`, the index of the input tuple a row answered, is gone: a bound variable is a
+  column. Input tuples are sent once each (`distinct_rows`), since a tuple given twice
+  would answer twice with nothing to tell the copies apart.
+- R2's two routes now agree on two bound variables. The scan-and-filter route tested each
+  variable's value on its own and let a crossed pair through: asked for (chem/1, G2) and
+  (chem/4, G5) on the fixture, it also kept (chem/4, G2). It tests the tuple.
+- `classify_values` reads every term column of every table, not `s` and `o`.
+- The unmatched report (below, not built) will be the input tuples no row holds, read off
+  the bound variables' columns, not a `binding` column.
+
+Tables written before this are not read: none is being kept.
+
 *Changed 2026-11-20 — the content hash is specified.* It was SHA-256 over each row as
 compact JSON, the rows sorted as Python strings: defined by this implementation, and not
 reproducible in JavaScript, which orders strings by UTF-16 unit and spells JSON escapes and
@@ -727,7 +763,7 @@ The directory an analysis lives in (D15): the current directory, or `--workspace
                        carries its own pins
   kgfq.log.jsonl       the session log: one record per library operation, append-only
   tables/
-    genes.parquet      s, p, o, o_kind, o_lang, o_datatype — or a derived table's columns
+    genes.parquet      the pattern's variables, four columns each — or a derived table's columns
     genes.receipt.json the receipt, also embedded in the Parquet footer
   report.md            written by `kgfq report` (C11)
 ```
