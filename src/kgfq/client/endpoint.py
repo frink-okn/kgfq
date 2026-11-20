@@ -902,6 +902,7 @@ class Endpoint:
         for start in range(0, len(unique), batch):
             chunk = unique[start : start + batch]
             page = self.query(release.link("labels"), {"iris": [f"<{i}>" for i in chunk]})
+            page.record.rows = len(page.body.get("labels", []))
             for entry in page.body.get("labels", []):
                 iri = (
                     entry["iri"]["value"]

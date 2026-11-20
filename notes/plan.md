@@ -834,6 +834,23 @@ building:
   resolve, log, ask, file, return a handle. The operations written before it are still
   methods of the CLI and move there with the MCP server (§7).
 
+*Landed 2026-11-20 — `labels`* (`kgfq.ops.labels`, `tests/test_labels.py`), in
+`../kgf-explorer`'s form: `kgfq labels <table> <column> [--graph g]… [--out name]` writes a
+table of one label per IRI in a column of an earlier table. It replaces §6's planned
+`kgfq labels <ds> --iris file`, since a column of a table is where IRIs to label are, and a
+file is one more thing passing through the caller. Decided while building:
+- **Hydration stays a separate, explicit step**, as this unit says: the labels are their own
+  table (`iri`, `label`, `graph`) to join, never columns added to the table they describe.
+- **Graphs are asked in order and the first label found wins**; a later graph is asked only
+  for what the earlier ones did not label. The default is the graphs the table was read
+  from, by its receipt's sources.
+- **An IRI no graph labels is a row with no label**, and the receipt's `bindings` block
+  counts them with a sample, as a bound fetch's does. On the fixture chemkg points at five
+  genes and names none: asked alone it labels 0 of 5, and with genekg after it, 5 of 5. A
+  missing label is as often a fact about a bundle's label declaration as about the node,
+  which is why it is reported and not hidden.
+- A column with no IRI in it is refused.
+
 ### C8. The sandboxed DuckDB
 
 D6 as code: one module constructs the connection, applies the settings, owns the
@@ -1248,7 +1265,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq resolve <text> [--datasets …] [--role label]` | situate | fan-out `/search` (C7) |
 | `kgfq fetch <ds> <pattern> [--values file \| --bind table:var=column] --out t.parquet\|.csv\|.json` | act | the strategy function over `/fragment` |
 | `kgfq hydrate <ds> --subjects file --properties p1,p2 --out …` | act | bindings per property today, `/star` when routed |
-| `kgfq labels <ds> --iris file` | act | `/labels` |
+| `kgfq labels <table> <column> [--graph g]…` | act | `/labels`, as a table to join (C7, 2026-11-20) |
 | `kgfq import <file\|url> --from "<description>"` | act | a table graded `external` — the one door for other data (D17, C9) |
 | `kgfq join <plan.json>` | act | a multi-step plan through the executors, into DuckDB |
 | `kgfq sql "<select>"` | local | the sandboxed DuckDB over fetched tables |

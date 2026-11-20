@@ -58,6 +58,12 @@ labels first. Its hits are a table like any other, so the next step binds from i
 (`--bind search_atrazine:subject`) and an IRI taken from it is recorded as derived from
 that step, where one typed from memory is recorded as asserted.
 
+`kgfq labels <table> <column>` writes a table of one label per IRI in a column, to join
+when names have to be part of the answer. The graphs are asked in order (`--graph`,
+repeatable) and the first label found wins; the default is the graph the table was read
+from, which is often not where the names are, so the handle says how many IRIs no graph
+labeled, with a sample.
+
 `fetch` counts a pattern before reading it, and refuses one over 1,000,000 rows before any
 row is read, saying how large it is, about how long it would take, and what would make it
 smaller. `--max-rows N` takes a part, `--all` reads it whole, and `KGFQ_FETCH_GUARD_ROWS`
