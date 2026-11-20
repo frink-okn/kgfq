@@ -1165,8 +1165,8 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | command | rung | backed by |
 |---|---|---|
 | `kgfq endpoints add\|list\|remove <url>` | find | the workspace's graph endpoints (D14, C2) |
-| `kgfq datasets [--iri X \| --class C \| --text Q]` | find | registry + service descriptors (C2) |
-| `kgfq summary <ds>` | orient | `/summary`, Markdown to the terminal |
+| `kgfq list_graphs [--iri X \| --class C \| --text Q]` (was `datasets`) | find | registry + service descriptors (C2) |
+| `kgfq graph_summary <ds>` (was `summary`) | orient | `/summary`, Markdown to the terminal |
 | `kgfq schema <ds> [--class C \| --predicate P \| --projection …]` | drill | `/schema` |
 | `kgfq count <ds> <pattern> [--values file]` | verify | `/count`, batch form |
 | `kgfq sample <ds> <pattern> [-n]` | verify | `/sample` |
@@ -1237,6 +1237,12 @@ Every position of every pattern is answered. An earlier draft of the server oper
 `/facet`, refused three shapes, and was withdrawn before review. Output goes to stdout
 only, as `count`'s does. A table of values with its own receipt would need a receipt
 shape for values, which is not decided.
+
+*Changed 2026-11-20 — a command goes by its operation's registry name.* `datasets` is
+`list_graphs` and `summary` is `graph_summary`, the names `docs/session/operations.yaml`
+gives them, which are `../kgf-explorer`'s: the word typed, the word in the log and, when
+`kgfq-mcp` lands, the tool's name are one. The first names and the hyphenated spellings
+still run (`ALIASES`). The other commands already had their operations' names.
 
 Conventions: JSON on stdout when not a TTY, tables when it is; `--out` writes files;
 the working tree is the workspace (C9) — `.kgfq/` holds the session pins, the

@@ -19,8 +19,8 @@ live `kgf serve` processes.
 ```bash
 uv sync
 uv run kgfq endpoints add https://apps.okn.us/kgf   # a KGF origin; repeatable
-uv run kgfq datasets                                  # every graph on every endpoint
-uv run kgfq summary ubergraph                         # the summary card
+uv run kgfq list_graphs                               # every graph on every endpoint
+uv run kgfq graph_summary ubergraph                   # the summary card
 uv run kgfq count ubergraph '? rdfs:subClassOf ?'      # from the cached inventory, no request
 uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
 uv run kgfq distinct scales '? fbi:OffenseUCRCode ?code' --by o   # distinct values with counts; reads no triples
@@ -31,6 +31,11 @@ uv run kgfq log
 uv run kgfq lint query.rq                              # KGFQ001–KGFQ012; never rewrites
 uv run kgfq sparql query.rq --dataset prokn --out hits   # lint, then kgf-sparql to completion, or a budget
 ```
+
+A command goes by the name the session format gives its operation
+([docs/session/operations.yaml](docs/session/operations.yaml)), which is also the name in
+the log. `datasets` and `summary`, the first names of `list_graphs` and `graph_summary`,
+still run.
 
 A pattern is three terms in doc 03 §3.3 syntax — `<iri>`, `prefix:local` against the
 release's manifest prefixes, `"literal"@en` — with `?` for an anonymous variable and

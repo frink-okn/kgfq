@@ -50,6 +50,21 @@ def test_endpoints_and_datasets(ws, chem, genes):
     assert [d["id"] for d in payload["datasets"]] == ["genekg"]
 
 
+def test_a_command_goes_by_its_registry_name_and_its_old_one(ws, chem):
+    """`list_graphs` and `graph_summary` are the session format's names for
+    what kgfq first called `datasets` and `summary`; both spellings run, and
+    so does the hyphenated one."""
+    listed = [run(name, workspace=ws)[0] for name in ("list_graphs", "list-graphs", "datasets")]
+    assert listed[0] == listed[1] == listed[2] and len(listed[0]["datasets"]) == 2
+    cards = [
+        run(name, "chemkg", workspace=ws)[0]
+        for name in ("graph_summary", "graph-summary", "summary")
+    ]
+    assert cards[0] == cards[1] == cards[2] and "Chem KG" in cards[0]
+    log, _ = run("log", workspace=ws)
+    assert {r["operation"] for r in log["steps"]} == {"graph_summary"}
+
+
 def test_summary_schema_count_sample(ws):
     md, _ = run("summary", "chemkg", workspace=ws)
     assert "Chem KG" in md

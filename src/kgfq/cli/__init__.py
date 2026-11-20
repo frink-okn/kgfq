@@ -51,6 +51,16 @@ from ..workspace.receipts import fetch_receipt, request_receipt
 from ..workspace.store import Workspace, WorkspaceError, stamped, write_parquet
 from ..workspace.triples import triples, write_ntriples
 
+# A command goes by the name the session format's registry gives its operation
+# (docs/session/operations.yaml), so the word typed, the word logged and a tool's
+# name are one. The names kgfq had first, and the hyphenated spellings, still run.
+ALIASES = {
+    "datasets": "list_graphs",
+    "list-graphs": "list_graphs",
+    "summary": "graph_summary",
+    "graph-summary": "graph_summary",
+}
+
 DEFAULT_PREFIXES = {
     "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
     "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
@@ -138,7 +148,7 @@ class Cli:
         self.emit({"endpoints": current}, table=[[o] for o in current], header=["origin"])
         return 0
 
-    def datasets(self) -> int:
+    def list_graphs(self) -> int:
         entries = self.session.datasets()
         if self.args.text:
             q = self.args.text.lower()
@@ -160,7 +170,7 @@ class Cli:
             self.err.write(f"unreachable: {origin}: {why}\n")
         return 0
 
-    def summary(self) -> int:
+    def graph_summary(self) -> int:
         ep, rel = self.resolve(self.args.dataset)
         step = self.step("graph_summary", graph=self.args.dataset, format=self.args.format)
         step.pin(_pin(ep, rel))
@@ -958,10 +968,14 @@ def build_parser() -> argparse.ArgumentParser:
     e.add_argument("action", choices=["add", "list", "remove"], nargs="?", default="list")
     e.add_argument("url", nargs="?")
 
-    d = sub.add_parser("datasets", help="every graph on every endpoint")
+    d = sub.add_parser(
+        "list_graphs", aliases=["list-graphs", "datasets"], help="every graph on every endpoint"
+    )
     d.add_argument("--text", help="substring filter over id, title and description")
 
-    s = sub.add_parser("summary", help="the summary card")
+    s = sub.add_parser(
+        "graph_summary", aliases=["graph-summary", "summary"], help="a graph's summary card"
+    )
     s.add_argument("dataset")
     s.add_argument("--format", choices=["md", "json"], default="md")
 
@@ -1106,7 +1120,7 @@ def main(argv: Sequence[str] | None = None, out=None, err=None) -> int:
         setattr(args, "class", args.class_)
     cli = Cli(args, out=out, err=err)
     try:
-        return getattr(cli, args.command)()
+        return getattr(cli, ALIASES.get(args.command, args.command))()
     except KgfError as e:
         cli.err.write(json.dumps(e.problem, indent=1) + "\n")
         return 2

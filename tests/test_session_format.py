@@ -377,6 +377,8 @@ def test_every_operation_kgfq_claims_is_a_command_it_has():
     }
     assert all(callable(getattr(Cli, name, None)) for name in claimed), claimed
     assert claimed == {
-        *("datasets", "summary", "schema", "count"),
+        *("list_graphs", "graph_summary", "schema", "count"),
         *("sample", "distinct", "fetch", "sparql"),
     }
+    # where kgfq has an operation it goes by the registry's name
+    assert all(e["implemented_by"].get("kgfq", name) == name for name, e in OPERATIONS.items())
