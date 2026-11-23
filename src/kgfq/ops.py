@@ -20,18 +20,24 @@ from typing import Any
 
 import pyarrow as pa
 
-from .client.endpoint import Endpoint, Release
+from .client.endpoint import Endpoint, Pattern, Release
 from .client.errors import CapabilityUnavailable, KgfqError
 from .client.session import Session
+from .client.statistics import Statistics
 from .client.terms import (
+    BadTermSyntax,
     Iri,
     Literal,
     Term,
+    Var,
     format_term,
+    parse_term,
     term_columns,
+    term_from_columns,
     term_from_json,
     variable_columns,
 )
+from .plan import check_guard, execute_fetch, guard_rows, plan_fetch
 from .workspace.bind import bind_rows, unmatched_report
 from .workspace.log import Step
 from .workspace.receipts import completeness, new_receipt, request_entries, source_of, totals_of
@@ -40,6 +46,15 @@ from .workspace.store import Workspace, WorkspaceError
 SEARCH_LIMIT = 20
 SEARCH_VARIABLES = ["subject", "label", "predicate", "matched", "match_kind", "score"]
 LABEL_VARIABLES = ["iri", "label", "graph"]
+DEFAULT_PREFIXES = {
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "owl": "http://www.w3.org/2002/07/owl#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+}
+RDF_TYPE = Iri("http://www.w3.org/1999/02/22-rdf-syntax-ns#type")
+TEMPLATE_LIMIT = 200
+PREVIEW_ROWS = 20
 
 
 @dataclass
@@ -302,4 +317,181 @@ def labels(
         "requests": len(records),
         "step": step.step,
         "content_hash": info.content_hash,
+    }
+
+
+# The one-pattern templates (``../kgf-explorer`` D2: `describe`, `incoming`,
+# `instances`, `neighbors`). There they are SPARQL the page wrote, run by an
+# engine in the tab. Each is a single triple pattern, so here each is a fetch
+# the plan sizes and the guard bounds (D3): no engine, and no SPARQL at all.
+TEMPLATES: dict[str, tuple[str, ...]] = {
+    "describe": ("iri",),
+    "incoming": ("iri",),
+    "instances": ("class",),
+    "neighbors": ("iri", "predicate"),
+}
+
+
+def template_pattern(operation: str, terms: dict[str, Iri], direction: str = "out") -> Pattern:
+    """The pattern a template stands for, under the explorer's variable names."""
+    if operation == "describe":
+        return Pattern(terms["iri"], Var("p"), Var("o"))
+    if operation == "incoming":
+        return Pattern(Var("s"), Var("p"), terms["iri"])
+    if operation == "instances":
+        return Pattern(Var("s"), RDF_TYPE, terms["class"])
+    if operation == "neighbors":
+        if direction not in ("out", "in"):
+            raise KgfqError(f'direction is "out" or "in", not {direction!r}')
+        if direction == "out":
+            return Pattern(terms["iri"], terms["predicate"], Var("node"))
+        return Pattern(Var("node"), terms["predicate"], terms["iri"])
+    raise KgfqError(f"no template named {operation!r}; there are {', '.join(TEMPLATES)}")
+
+
+def iri_argument(text: str, name: str, prefixes: dict[str, str]) -> Iri:
+    """An IRI given as an argument: bare and absolute as it appears in a table,
+    bracketed, or a CURIE against the graph's prefixes."""
+    text = text.strip()
+    if text.startswith(("http://", "https://")):
+        return Iri(text)
+    term = parse_term(text, prefixes)
+    if not isinstance(term, Iri):
+        raise BadTermSyntax(f"{name} is an IRI, not {text!r}")
+    return term
+
+
+def compact(term: Term | None) -> str | None:
+    """A term for a preview: an IRI bare, as a later argument takes it, and a
+    literal in request syntax only where a tag or a datatype says something."""
+    if term is None:
+        return None
+    if isinstance(term, Iri):
+        return term.value
+    if isinstance(term, Literal) and not term.lang and not term.datatype:
+        return term.value
+    return format_term(term)
+
+
+def preview(
+    table: pa.Table, variables: list[str], rows: int = PREVIEW_ROWS
+) -> list[dict[str, Any]]:
+    """The first rows of a ``bindings`` table, compact, for a handle."""
+    head = table.slice(0, rows).to_pylist()
+    return [
+        {
+            v: None
+            if r[v] is None
+            else compact(
+                term_from_columns(r[v], r[f"{v}_kind"], r[f"{v}_lang"], r[f"{v}_datatype"])
+            )
+            for v in variables
+        }
+        for r in head
+    ]
+
+
+def template(
+    ctx: Context,
+    operation: str,
+    graphs: list[str],
+    arguments: dict[str, str],
+    *,
+    direction: str | None = None,
+    limit: int = TEMPLATE_LIMIT,
+    out: str | None = None,
+) -> dict[str, Any]:
+    """``describe``, ``incoming``, ``instances`` or ``neighbors``: a look at one
+    thing, across one or more graphs, as a table whose columns are the
+    explorer's (``p, o``; ``s, p``; ``s``; ``node``).
+
+    Each graph is asked the same pattern, in order, and the rows are the bag of
+    what they answer, as a federated SELECT's are: a triple two graphs hold is
+    two rows. ``limit`` bounds the whole read, so the fetch guard has nothing to
+    refuse; a table that reached it says so. The receipt's ``pattern`` is the
+    one every row answers, and its detail says how many rows each graph gave,
+    in order, which is how a row is traced to its graph."""
+    if not graphs:
+        raise KgfqError(f"{operation} needs at least one graph")
+    if limit < 1:
+        raise KgfqError(f"--limit is a number of rows, at least 1, not {limit}")
+    resolved = [ctx.resolve(g) for g in graphs]
+    ep0, rel0 = resolved[0]
+    prefixes = {**DEFAULT_PREFIXES, **ep0.prefixes(rel0)}
+    terms = {k: iri_argument(arguments[k], k, prefixes) for k in TEMPLATES[operation]}
+    pattern = template_pattern(operation, terms, direction or "out")
+    variables = list(dict.fromkeys(pattern.variables().values()))
+    subject = next(iter(terms.values())).value
+    tail = subject.rstrip("/#").rsplit("/", 1)[-1].rsplit("#", 1)[-1]
+    name = ctx.workspace.check_name(out or table_name(operation, tail))
+    step = ctx.step(
+        operation,
+        graphs=graphs,
+        **{k: t.value for k, t in terms.items()},
+        direction=direction,
+        limit=limit,
+        out=name,
+    )
+    inputs = step.input_values([t.value for t in terms.values()])
+    tables: list[pa.Table] = []
+    records = []
+    plans = []
+    by_graph: dict[str, int] = {}
+    taken = 0
+    for ep, rel in resolved:
+        step.pin(pin_of(rel))
+        if taken >= limit:
+            by_graph[rel.dataset] = 0
+            continue
+        with ep.trace() as t:
+            plan = plan_fetch(
+                ep, rel, pattern, stats=Statistics(ctx.workspace, ep, rel), guard=guard_rows()
+            )
+            check_guard(plan, pattern, rel, max_rows=limit - taken)
+            got = execute_fetch(ep, rel, pattern, plan, max_rows=limit - taken)
+        records.extend(t.records)
+        plans.append(plan.as_dict())
+        tables.append(got)
+        by_graph[rel.dataset] = got.num_rows
+        taken += got.num_rows
+    table = pa.concat_tables(tables) if tables else bindings_table(variables, [])
+    verdict = completeness(records)
+    limit_reached = taken >= limit and not verdict["complete"]
+    approximations = (
+        [f"stopped at the limit of {limit} rows: which rows, not how many, is unspecified (R3)"]
+        if limit_reached
+        else []
+    )
+    receipt = new_receipt(
+        kind=operation,
+        step=step.step,
+        grade="bundle",
+        sources=[source_of(rel) for _, rel in resolved],
+        shape="bindings",
+        pattern=pattern.as_body(),
+        requests=request_entries(records),
+        totals=totals_of(records),
+        completeness=verdict,
+        approximations=approximations,
+        inputs=inputs,
+        detail={"rows_by_graph": by_graph, "limit": limit, "plans": plans},
+    )
+    info = ctx.workspace.write_table(name, table, receipt)
+    step.receipt(info.receipt)
+    step.table(info.receipt)
+    step.finish()
+    return {
+        "table": info.name,
+        "path": str(info.path),
+        "rows": info.rows,
+        "columns": variables,
+        "grade": "bundle",
+        "graphs": by_graph,
+        "complete": verdict["complete"],
+        "limit_reached": limit_reached,
+        "approximations": approximations,
+        "requests": len(records),
+        "step": step.step,
+        "content_hash": info.content_hash,
+        "preview": preview(table, variables),
     }

@@ -68,12 +68,7 @@ BIND_HELP = (
     "distinct values of table chems's column chem"
 )
 
-DEFAULT_PREFIXES = {
-    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
-    "owl": "http://www.w3.org/2002/07/owl#",
-    "xsd": "http://www.w3.org/2001/XMLSchema#",
-}
+DEFAULT_PREFIXES = ops.DEFAULT_PREFIXES
 
 
 class Cli:
@@ -385,6 +380,42 @@ class Cli:
             header=names,
         )
         return 0
+
+    def _template(self, **arguments: str) -> int:
+        """A one-pattern template: its table's handle, and its first rows."""
+        a = self.args
+        handle = ops.template(
+            self.ctx,
+            ALIASES.get(a.command, a.command),
+            [a.dataset, *(a.graph or [])],
+            arguments,
+            direction=getattr(a, "direction", None),
+            limit=a.limit,
+            out=a.out,
+        )
+        columns = handle["columns"]
+        self.emit(
+            handle,
+            table=[[row[c] for c in columns] for row in handle["preview"]]
+            + [
+                [f"→ {handle['rows']} row(s), filed as table {handle['table']}"]
+                + [""] * (len(columns) - 1)
+            ],
+            header=columns,
+        )
+        return 0
+
+    def describe(self) -> int:
+        return self._template(iri=self.args.iri)
+
+    def incoming(self) -> int:
+        return self._template(iri=self.args.iri)
+
+    def instances(self) -> int:
+        return self._template(**{"class": self.args.class_})
+
+    def neighbors(self) -> int:
+        return self._template(iri=self.args.iri, predicate=self.args.predicate)
 
     def labels(self) -> int:
         """``kgfq labels``: a table of one label per IRI in a table's column."""
@@ -1148,6 +1179,32 @@ def build_parser() -> argparse.ArgumentParser:
     se.add_argument("text", help="words to find")
     se.add_argument("--limit", type=int, default=ops.SEARCH_LIMIT, help="most hits to keep")
     se.add_argument("--out", help="table name (default: search_<the words>)")
+
+    for name, help_, positional in (
+        ("describe", "every triple with this IRI as subject", [("iri", "the entity")]),
+        ("incoming", "every triple with this IRI as object", [("iri", "the entity")]),
+        ("instances", "the members of a class", [("class_", "the class")]),
+        (
+            "neighbors",
+            "the nodes one predicate reaches from an entity",
+            [("iri", "the entity"), ("predicate", "the predicate to follow")],
+        ),
+    ):
+        tp = sub.add_parser(name, help=help_)
+        tp.add_argument("dataset")
+        for arg, arg_help in positional:
+            tp.add_argument(arg, help=f"{arg_help}: an IRI, bare, bracketed or a CURIE")
+        if name == "neighbors":
+            tp.add_argument(
+                "--direction",
+                choices=["out", "in"],
+                help="out follows the predicate from the entity (default); in, backwards",
+            )
+        tp.add_argument(
+            "--graph", action="append", help="another graph to ask as well (repeatable)"
+        )
+        tp.add_argument("--limit", type=int, default=ops.TEMPLATE_LIMIT, help="most rows to read")
+        tp.add_argument("--out", help="table name")
 
     lb = sub.add_parser("labels", help="one label per IRI in a table's column, as a new table")
     lb.add_argument("table")
