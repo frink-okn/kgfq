@@ -27,6 +27,7 @@ uv run kgfq count ubergraph '? rdfs:subClassOf ?'      # from the cached invento
 uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
 uv run kgfq distinct scales '? fbi:OffenseUCRCode ?code' --by o   # distinct values with counts; reads no triples
 uv run kgfq fetch phaseskg '? rdfs:label ?' --out labels   # tables/labels.parquet + receipt
+uv run kgfq sql 'SELECT o AS label, count(*) AS n FROM labels GROUP BY o' --out by_label
 uv run kgfq receipt labels
 uv run kgfq export labels --out labels.nt                # the table's triples, as N-Triples
 uv run kgfq log
@@ -65,6 +66,15 @@ triple it is the object of, `instances <graph> <class>` a class's members, and `
 reads at most `--limit` rows (200) and prints the first of them; `--graph` asks further
 graphs the same thing. An IRI is given bare as it appears in a table, bracketed, or as a
 CURIE.
+
+`kgfq sql "<select>"` runs one SELECT over the workspace's tables and files the result as
+a new table: this is how tables are joined, filtered, grouped and counted. A table is named
+by its name (`FROM affects a JOIN pathways p ON a.gene = p.gene`), and a term column `x`
+has `x_kind`, `x_lang` and `x_datatype` beside it. A result column that came from a table
+keeps its kind; a number SQL computed is stored as text with its datatype; text built in SQL
+is plain text unless `'iri' AS x_kind` is selected beside it, and the command says when
+that happened. The DuckDB behind it can read nothing but the workspace's tables: no file,
+no URL, no extension, one SELECT, a row budget and a time budget.
 
 `kgfq labels <table> <column>` writes a table of one label per IRI in a column, to join
 when names have to be part of the answer. The graphs are asked in order (`--graph`,

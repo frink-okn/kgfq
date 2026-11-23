@@ -417,6 +417,22 @@ class Cli:
     def neighbors(self) -> int:
         return self._template(iri=self.args.iri, predicate=self.args.predicate)
 
+    def sql(self) -> int:
+        """``kgfq sql``: one SELECT over the workspace's tables, filed as a table."""
+        a = self.args
+        handle = ops.sql(self.ctx, a.statement, out=a.out, max_rows=a.max_rows, timeout_s=a.timeout)
+        columns = handle["columns"]
+        last = f"→ {handle['rows']} row(s), filed as table {handle['table']} ({handle['grade']})"
+        self.emit(
+            handle,
+            table=[[row[c] for c in columns] for row in handle["preview"]]
+            + [[last] + [""] * (len(columns) - 1)],
+            header=columns,
+        )
+        if handle.get("note") and not self.json:
+            self.err.write(handle["note"] + "\n")
+        return 0
+
     def labels(self) -> int:
         """``kgfq labels``: a table of one label per IRI in a table's column."""
         a = self.args
@@ -1205,6 +1221,14 @@ def build_parser() -> argparse.ArgumentParser:
         )
         tp.add_argument("--limit", type=int, default=ops.TEMPLATE_LIMIT, help="most rows to read")
         tp.add_argument("--out", help="table name")
+
+    sq = sub.add_parser("sql", help="one SELECT over the workspace's tables, as a new table")
+    sq.add_argument("statement", help="a single SELECT; WITH … SELECT is one")
+    sq.add_argument("--out", help="table name (default: sql_<step>)")
+    sq.add_argument("--max-rows", type=int, help="most rows to keep (default 1,000,000)")
+    sq.add_argument(
+        "--timeout", type=float, help="seconds before the query is stopped (default 60)"
+    )
 
     lb = sub.add_parser("labels", help="one label per IRI in a table's column, as a new table")
     lb.add_argument("table")

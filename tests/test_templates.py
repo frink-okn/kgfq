@@ -66,11 +66,12 @@ def test_describe_is_the_triples_an_entity_is_subject_of(ws, graphs):
     assert handle["limit_reached"] is False and handle["graphs"] == {"chemkg": 6}
     # the constant subject has no column; the receipt's pattern puts it back
     assert exported(ws, "describe_1") == expected
-    # the first rows come back with the handle: an IRI bare, a literal by its tags
+    # the first rows come back with the handle: an IRI bare, a literal by its tags,
+    # a number as a number
     seen = {(r["p"], r["o"]) for r in handle["preview"]}
     assert (RDF_TYPE, EX + "Chemical") in seen
     assert ("http://www.w3.org/2000/01/rdf-schema#label", '"atrazine"@en') in seen
-    assert (EX + "mass", '"107.5"^^<http://www.w3.org/2001/XMLSchema#double>') in seen
+    assert (EX + "mass", 107.5) in seen, "a number is shown as one"
     assert (EX + "synonym", "2-chloro-4-ethylamino-6-isopropylamino-s-triazine") in seen
 
     receipt, _ = run("receipt", "describe_1", workspace=ws)

@@ -15,6 +15,8 @@ The operations ``../kgf-explorer`` has and kgfq lacked land here
 
 from __future__ import annotations
 
+import math
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -38,8 +40,9 @@ from .client.terms import (
     variable_columns,
 )
 from .plan import check_guard, execute_fetch, guard_rows, plan_fetch
+from .workspace import sandbox
 from .workspace.bind import bind_rows, unmatched_report
-from .workspace.log import Step
+from .workspace.log import Step, weakest_grade
 from .workspace.receipts import completeness, new_receipt, request_entries, source_of, totals_of
 from .workspace.store import Workspace, WorkspaceError
 
@@ -206,6 +209,17 @@ def search(
     }
 
 
+def graphs_of(receipt: dict[str, Any]) -> list[str]:
+    """The graphs a table's values came from, each as ``id@origin``: the ones
+    it was read from, or for a table SQL derived, the ones its inputs were."""
+    read = [
+        f"{s['dataset']}@{s['origin']}"
+        for s in receipt["core"].get("sources", [])
+        if s.get("kind") == "kgf"
+    ]
+    return read or list(receipt.get("detail", {}).get("graphs", []))
+
+
 def labels(
     ctx: Context,
     table: str,
@@ -232,14 +246,7 @@ def labels(
             f"table {table}'s column {column!r} holds no IRI to label"
             + (f": its {len(rows)} values are literals or blank nodes" if rows else "")
         )
-    source = ws.read_receipt(table)["core"]
-    asked = list(graphs or [])
-    if not asked:
-        asked = [
-            f"{s['dataset']}@{s['origin']}"
-            for s in source.get("sources", [])
-            if s.get("kind") == "kgf"
-        ]
+    asked = list(graphs or []) or graphs_of(ws.read_receipt(table))
     if not asked:
         raise WorkspaceError(
             f"table {table} was read from no graph, so name the graphs to ask for labels (--graph)"
@@ -361,15 +368,35 @@ def iri_argument(text: str, name: str, prefixes: dict[str, str]) -> Iri:
     return term
 
 
-def compact(term: Term | None) -> str | None:
-    """A term for a preview: an IRI bare, as a later argument takes it, and a
-    literal in request syntax only where a tag or a datatype says something."""
+NUMERIC = frozenset(
+    f"http://www.w3.org/2001/XMLSchema#{t}"
+    for t in ("integer", "int", "long", "short", "decimal", "double", "float")
+)
+SAFE_INTEGER = 2**53 - 1
+
+
+def compact(term: Term | None) -> str | int | float | bool | None:
+    """A term for a preview, as ``../kgf-explorer`` shows one to a model: an IRI
+    bare, as a later argument takes it; a number as a number, where it is one a
+    reader of JSON can hold exactly; a literal in request syntax only where a
+    tag or a datatype says something more."""
     if term is None:
         return None
     if isinstance(term, Iri):
         return term.value
-    if isinstance(term, Literal) and not term.lang and not term.datatype:
-        return term.value
+    if isinstance(term, Literal) and not term.lang:
+        if term.datatype is None:
+            return term.value
+        if term.datatype in NUMERIC:
+            try:
+                number = float(term.value)
+            except ValueError:
+                return format_term(term)
+            if math.isfinite(number) and abs(number) <= SAFE_INTEGER:
+                whole = term.datatype.endswith(("integer", "int", "long", "short"))
+                return int(term.value) if whole else number
+        if term.datatype.endswith("#boolean") and term.value in ("true", "false"):
+            return term.value == "true"
     return format_term(term)
 
 
@@ -495,3 +522,101 @@ def template(
         "content_hash": info.content_hash,
         "preview": preview(table, variables),
     }
+
+
+def sql(
+    ctx: Context,
+    query: str,
+    *,
+    out: str | None = None,
+    max_rows: int | None = None,
+    timeout_s: float | None = None,
+) -> dict[str, Any]:
+    """``sql``: one SELECT over the workspace's tables, in the sandboxed DuckDB
+    (C8, D6). The result is a new table, which is how tables are joined,
+    filtered, grouped and counted here: fetch steps, and SQL to combine them.
+
+    The table is ``bindings`` like any other, so a later step binds from it and
+    ``labels`` names its IRIs. A result column gets its kind back by
+    ``../kgf-explorer``'s rule (``sandbox.terms_from_sql``); a number SQL
+    computed is a typed literal, text with a datatype beside it. Its grade is
+    the weakest of the tables it read, one hop (D17), and ``asserted`` where it
+    read none, since its values were then typed by the caller."""
+    ws = ctx.workspace
+    number = ws.next_step()
+    name = ws.check_name(out or f"sql_{number}")
+    limit = max_rows or sandbox.MAX_ROWS
+    budget_s = timeout_s or sandbox.TIMEOUT_S
+    started = time.perf_counter()
+    selected = sandbox.select(ws, query, max_rows=limit, timeout_s=budget_s)
+    variables, rows, plain = sandbox.terms_from_sql(ws, selected)
+    elapsed = round((time.perf_counter() - started) * 1000, 3)
+    step = ctx.step("sql", query=query, max_rows=max_rows, timeout_s=timeout_s, out=name)
+    inputs = {table: step.input_table(table) for table in selected.reads}
+    grade = weakest_grade(str(i["grade"]) for i in inputs.values()) if inputs else "asserted"
+    graphs = list(
+        dict.fromkeys(g for table in selected.reads for g in graphs_of(ws.read_receipt(table)))
+    )
+    approximations = (
+        [f"stopped at the row budget of {limit:,}: which rows, not how many, is unspecified"]
+        if selected.truncated
+        else []
+    )
+    receipt = new_receipt(
+        kind="sql",
+        step=step.step,
+        grade=grade,
+        sources=[],
+        shape="bindings",
+        requests=[],
+        totals={
+            "requests": 0,
+            "bindings_requests": 0,
+            "bytes_decoded": 0,
+            "bytes_wire": 0,
+            "elapsed_ms": elapsed,
+        },
+        completeness={
+            "complete": not selected.truncated,
+            "incomplete_because": ["max_rows"] if selected.truncated else [],
+        },
+        approximations=approximations,
+        inputs=inputs,
+        detail={
+            "statement": query,
+            "reads": selected.reads,
+            "graphs": graphs,
+            "plain_text": plain,
+            "engine": {"duckdb": selected.duckdb},
+            "budget": {"max_rows": limit, "timeout_s": budget_s},
+        },
+    )
+    table = bindings_table(variables, rows)
+    info = ws.write_table(name, table, receipt)
+    step.receipt(info.receipt)
+    step.table(info.receipt)
+    step.finish()
+    handle: dict[str, Any] = {
+        "table": info.name,
+        "path": str(info.path),
+        "rows": info.rows,
+        "columns": variables,
+        "grade": grade,
+        "reads": selected.reads,
+        "complete": not selected.truncated,
+        "approximations": approximations,
+        "step": step.step,
+        "content_hash": info.content_hash,
+        "preview": preview(table, variables),
+    }
+    if plain:
+        first = next(iter(plain))
+        counts = ", ".join(f"{c} ({n:,} of {info.rows:,} rows)" for c, n in plain.items())
+        # Stated, never guessed (C6): say which columns are text, and how to
+        # make them IRIs, where a fetch bound to them would match nothing.
+        handle["note"] = (
+            f"Plain text, not IRIs: {counts}. These values had no {first}_kind beside them and "
+            f"are not in the tables read with one kind. If they are IRIs, select 'iri' AS "
+            f"{first}_kind with {first}."
+        )
+    return handle

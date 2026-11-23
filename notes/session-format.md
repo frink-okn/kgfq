@@ -241,8 +241,8 @@ Why this shape:
   above U+FFFF, and `json.dumps` and `JSON.stringify` would have had to agree on every escape
   and every number. Lengths need no escaping, and an integer sum is the same everywhere.
 - **A column's type is part of the table**: the integer 1 and the string `1` hash apart. A
-  float has no spelling two languages share and is refused until one is chosen (§11); the
-  explorer returns numbers as typed literals, which is one answer.
+  float has no spelling two languages share and is refused. None is ever stored: a number
+  SQL computes is a typed literal, text with its datatype, in both clients (2026-11-23).
 - **It finds any difference that happens; it is not proof against a table built to
   collide.** A sum of digests can be attacked where a single digest cannot. It need not
   resist that: whoever can rewrite a table's rows can rewrite the receipt in its footer.
@@ -364,7 +364,7 @@ and CLI; `kgfq-mcp` follows the library. The registry's `implemented_by` is the 
 | `fetch` | bind from a table; the visitor's budget stops a run and keeps what arrived (its D10) | `--values`, `--bind` (2026-11-20), `--max-rows`, R1/R2 plan; refused over 1,000,000 rows unless `--all` (the guard, 2026-11-20) | have; the two bound a fetch differently, which the format need not reconcile |
 | `describe`, `incoming`, `instances`, `neighbors` | SPARQL templates in the tab | fetches the plan sizes and the guard bounds (2026-11-23); no SPARQL | have |
 | `two_hop` | a SPARQL template in the tab | — | **kgfq needs**, as two fetches and a join |
-| `sql` | one SELECT, locked DuckDB-Wasm | — (C8 not built) | **kgfq needs** |
+| `sql` | one SELECT, locked DuckDB-Wasm | `sql` (2026-11-23): one SELECT, locked DuckDB | have |
 | `labels` | `/labels`, beside tables | `labels` (2026-11-20): a table to join | have; labels shown beside a table's rows, as the explorer does when it shows one, wait for `read_table` |
 | `read_table` | rows for the model, paged | — | **kgfq-mcp needs** (handles, never rows, §7 of the plan) |
 | `terms` | `/terms` counts and lists | — | **kgfq needs** |
@@ -433,7 +433,16 @@ Opening a session: a zip of the workspace, a chosen directory, or
 - **The explorer's anonymous-position collision**: an empty subject is `?s`, so an object of
   `?s` would make `?s <p> ?s`. Unchecked whether it refuses.
 - **The explorer's pins**: whether every receipt records the content digest.
-- **Numbers in a derived table's hash** (§5).
+- ~~**Numbers in a derived table's hash**~~ (§5). Settled 2026-11-23: a number SQL
+  computed is stored as a typed literal, text with its datatype, in both clients, so no
+  float is ever stored. kgfq spells a double as ECMAScript does.
+- **A double with a whole value.** The explorer types a computed number by its JavaScript
+  value, so `avg` giving 2.0 is `"2"^^xsd:integer` there; kgfq types it by the column, so
+  it is `"2"^^xsd:double`. The text agrees and the datatype does not. The column's type is
+  the one a column should have; the explorer's to change.
+- **Dates.** The explorer writes every date and timestamp as `xsd:dateTime` in UTC with
+  milliseconds; kgfq writes a DATE as `xsd:date` and a timestamp without a zone as it
+  came.
 - **Labels in an exported session**: the explorer fetches them per table and keeps them beside
   it; whether an export carries them as a sidecar or the reader refetches.
 - **A live view**, after §10. kgf-explorer, served by a `kgfq view` that serves a built
