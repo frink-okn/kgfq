@@ -22,6 +22,7 @@ uv run kgfq endpoints add https://apps.okn.us/kgf   # a KGF origin; repeatable
 uv run kgfq list_graphs                               # every graph on every endpoint
 uv run kgfq graph_summary ubergraph                   # the summary card
 uv run kgfq search ubergraph 'diabetes mellitus'       # a name to its IRIs; the hits are a table
+uv run kgfq describe ubergraph obo:MONDO_0005015       # what an entity is the subject of
 uv run kgfq count ubergraph '? rdfs:subClassOf ?'      # from the cached inventory, no request
 uv run kgfq explain prokn '?g obo:RO_0002200 ?d' --values genes.tsv
 uv run kgfq distinct scales '? fbi:OffenseUCRCode ?code' --by o   # distinct values with counts; reads no triples
@@ -57,6 +58,13 @@ pattern, so `kgfq export` can put every row back into it and write the triples.
 labels first. Its hits are a table like any other, so the next step binds from it
 (`--bind search_atrazine:subject`) and an IRI taken from it is recorded as derived from
 that step, where one typed from memory is recorded as asserted.
+
+`kgfq describe <graph> <iri>` is every triple an entity is the subject of, `incoming` every
+triple it is the object of, `instances <graph> <class>` a class's members, and `neighbors
+<graph> <iri> <predicate>` what one predicate reaches (`--direction in` backwards). Each
+reads at most `--limit` rows (200) and prints the first of them; `--graph` asks further
+graphs the same thing. An IRI is given bare as it appears in a table, bracketed, or as a
+CURIE.
 
 `kgfq labels <table> <column>` writes a table of one label per IRI in a column, to join
 when names have to be part of the answer. The graphs are asked in order (`--graph`,

@@ -583,6 +583,32 @@ runs for ten minutes and holds 9 GB. Decided while building:
 On a local kgf 0.6.0, `fetch nasa-gesdisc-kg '? ? ?'` (2,189,878 triples) is refused in
 0.23 s, naming 219 requests and 24 to 49 s.
 
+*Landed 2026-11-23 — the one-pattern templates* (`kgfq.ops.template`,
+`tests/test_templates.py`): `describe`, `incoming`, `instances` and `neighbors`, the four of
+`../kgf-explorer`'s five templates that are a single triple pattern. There they are SPARQL
+the page wrote, run by an engine in the tab (its D2, D4). Here each is a fetch the plan
+sizes and the guard bounds, so D16 holds without a template executor: no engine, and no
+SPARQL at all. Decided while building:
+- **The explorer's variables**: `p, o`; `s, p`; `s`; `node`. The receipt's `pattern` holds
+  the constants, so `kgfq export` gives the triples: a describe of `chem/1` exports the six
+  triples the fixture's `.nt` has it as subject of.
+- **`--limit` (200, the explorer's) bounds the whole read**, so the guard has nothing to
+  refuse, and a table that reached it says so as an R3 approximation.
+- **Several graphs are asked the same pattern in order** (`--graph`, repeatable), and the
+  rows are the bag of what they answer, as a federated SELECT's are. There is no `graph`
+  column, as the explorer has none; the receipt's detail says how many rows each graph gave,
+  in order, which is how a row is traced to its graph. A gene described in genekg and only
+  pointed at from chemkg gives `{chemkg: 0, genekg: 4}`.
+- **The handle carries the first 20 rows**, compact: an IRI bare, as a later argument takes
+  it, and a literal in request syntax only where a tag or a datatype says something. These
+  are operations for looking at one thing, and a table's name alone would send every caller
+  to read it back.
+- **An IRI argument** is bare and absolute as it appears in a table, bracketed, or a CURIE
+  against the first graph's prefixes; the record's `args` carry it bare, as the registry
+  spells it.
+
+`two_hop`, the fifth, is two patterns and a join, and waits for the work that joins.
+
 ### C5. Executors
 
 Streaming for plans the guard calls small: rows in memory, joined in code. Materialize

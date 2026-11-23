@@ -182,27 +182,27 @@ operations:
     args:
       type: object
       required: [graphs, iri]
-      properties: {graphs: *graphs, iri: {type: string}, limit: *limit}
+      properties: {graphs: *graphs, iri: {type: string}, limit: *limit, out: {type: string}}
     table: bindings
-    implemented_by: {kgf-explorer: describe}
+    implemented_by: {kgf-explorer: describe, kgfq: describe}
 
   incoming:
     meaning: "Every triple with this IRI as object: what points at it, and by which predicate."
     args:
       type: object
       required: [graphs, iri]
-      properties: {graphs: *graphs, iri: {type: string}, limit: *limit}
+      properties: {graphs: *graphs, iri: {type: string}, limit: *limit, out: {type: string}}
     table: bindings
-    implemented_by: {kgf-explorer: incoming}
+    implemented_by: {kgf-explorer: incoming, kgfq: incoming}
 
   instances:
     meaning: "The members of a class, by rdf:type."
     args:
       type: object
       required: [graphs, class]
-      properties: {graphs: *graphs, class: {type: string}, limit: *limit}
+      properties: {graphs: *graphs, class: {type: string}, limit: *limit, out: {type: string}}
     table: bindings
-    implemented_by: {kgf-explorer: instances}
+    implemented_by: {kgf-explorer: instances, kgfq: instances}
 
   neighbors:
     meaning: "The nodes one predicate reaches from an entity, forwards or backwards."
@@ -215,8 +215,9 @@ operations:
         predicate: {type: string}
         direction: *direction
         limit: *limit
+        out: {type: string}
     table: bindings
-    implemented_by: {kgf-explorer: neighbors}
+    implemented_by: {kgf-explorer: neighbors, kgfq: neighbors}
 
   two_hop:
     meaning: >-
