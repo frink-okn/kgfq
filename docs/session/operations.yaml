@@ -308,9 +308,13 @@ operations:
     args:
       type: object
       required: [query]
-      properties: {query: {type: string}}
+      properties:
+        query: {type: string}
+        out: {type: string, description: "kgfq: the table's name."}
+        max_rows: {type: integer, minimum: 1, description: "kgfq: the row budget, where it was not the default."}
+        timeout_s: {type: number, description: "kgfq: the time budget, where it was not the default."}
     table: bindings
-    implemented_by: {kgf-explorer: sql}
+    implemented_by: {kgf-explorer: sql, kgfq: sql}
 
   read_table:
     meaning: "Rows of an earlier table, a page at a time, for a reader that was shown a preview."

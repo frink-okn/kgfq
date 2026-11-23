@@ -887,6 +887,43 @@ a `CREATE TABLE … AS` result leaves DuckDB only by being exported to `tables/`
 its own receipt (C6). Read-only views over files also mean two `kgfq` processes never
 contend for a writer lock.
 
+*Landed 2026-11-23* as `kgfq.workspace.sandbox`, with `kgfq sql` over it (`kgfq.ops.sql`,
+`tests/test_sql.py`). `../kgf-explorer` has the same operation over DuckDB-Wasm, and the
+two derive one table from one statement. Decided while building:
+- **The refusals are DuckDB's, not a filter of ours over the statement's text.**
+  `enable_external_access` off, extension autoinstall and autoload off, Python variables
+  not tables (`python_enable_replacements`), then `lock_configuration`. The statement is one
+  SELECT by the parser's account of what it parsed (`extract_statements`). `tests/test_sql.py`
+  holds nineteen statements that must be refused, by what DuckDB or the parser says of each.
+- **The lock comes first; the statement is not parsed for its tables until it is on.** The
+  first version found the tables a statement names with `get_table_names` on a second
+  connection that was not locked. That function binds as it goes: given
+  `read_parquet('…')` it opened the file before the sandbox had seen the statement. It also
+  cannot bind a `JOIN … USING`. The tables now come from `json_serialize_sql`, a parse and
+  nothing more, run on the locked connection. The test names a pipe: the old way hung its
+  process on it, holding the interpreter.
+- **The store stays the Parquet files** (D15). The connection is in memory, one per
+  statement, with only the tables the statement names, each registered as an Arrow dataset
+  that pyarrow reads, so DuckDB itself opens nothing. No database file, so no writer lock.
+- **A result is a `bindings` table like any other**, so a later step binds from it and
+  `labels` names its IRIs, from the graphs its inputs were read from. A result column's
+  kind comes back by the explorer's rule (its D6): reassembled from `x_kind` where the
+  statement selects it; else the kind its values have in the tables read, where a value has
+  one encoding there; else plain text, counted and said, since an IRI built in SQL is text
+  and a fetch bound to it matches nothing. Never read off a value's shape.
+- **A number SQL computed is a typed literal**: text with its datatype beside it. Every
+  stored cell is then text, which settles C6's open question of a float in the content
+  hash: none is ever stored. A double is spelled as ECMAScript spells one (`js_number`),
+  where Python's `repr` and JavaScript's `String` have the same digits and other switches
+  (`1e+16`, `1e-07`), so the two clients' derived tables agree.
+- **Its grade is the weakest of the tables it read**, one hop (D17), and `asserted` where it
+  read none, since its values were then typed by the caller.
+- **It is bounded**: 1,000,000 rows read back, 60 s before the query is interrupted, both
+  flags. Past the row budget the table is kept and marked incomplete; past the time budget
+  nothing is filed.
+- **Not built:** `CREATE TABLE … AS` as this unit describes it. A result is kept by naming
+  it (`--out`), which is the same thing with one statement kind fewer to allow.
+
 ### C9. The workspace and the log
 
 *Proposed and accepted 2026-11-20* (`notes/session-format.md`, issue #3): one session format
@@ -1294,7 +1331,7 @@ full access with no MCP setup. Commands follow doc 06 §6.2.2's bootstrap ladder
 | `kgfq labels <table> <column> [--graph g]…` | act | `/labels`, as a table to join (C7, 2026-11-20) |
 | `kgfq import <file\|url> --from "<description>"` | act | a table graded `external` — the one door for other data (D17, C9) |
 | `kgfq join <plan.json>` | act | a multi-step plan through the executors, into DuckDB |
-| `kgfq sql "<select>"` | local | the sandboxed DuckDB over fetched tables |
+| `kgfq sql "<select>" [--out name]` | local | the sandboxed DuckDB over the workspace's tables (C8, 2026-11-23) |
 | `kgfq explain <intent>` | debug | prints the plan (D12) without executing |
 | `kgfq lint <file.rq>` | author | `kgfq.lint`, §5.6 |
 | `kgfq sparql <file.rq> --dataset … [--endpoint url]` | complete | lint, then launch `kgf-sparql` (§5.2); refuses politely when it is not installed |
